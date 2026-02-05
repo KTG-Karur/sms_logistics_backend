@@ -1,0 +1,26 @@
+{
+  "development": {
+    "username": "root",
+    "password": null,
+    "database": "asian_audit",
+    "host": "localhost",
+    "dialect": "mysql",
+    "timezone": "+05:30"
+  },
+  "test": {
+    "username": "root",
+    "password": null,
+    "database": "stallexpo",
+    "host": "localhost",
+    "dialect": "mysql",
+    "timezone": "+05:30"
+  },
+  "production": {
+    "username": "stallexpo",
+    "password": "DT/6kpab/6I5sng5",
+    "database": "stallexpo",
+    "host": "194.195.115.123",
+    "dialect": "mysql",
+    "timezone": "+05:30"
+  }
+}

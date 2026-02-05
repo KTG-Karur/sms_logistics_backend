@@ -1,0 +1,19 @@
+"use strict";
+
+module.exports = function routesPlugin(fastify, opts, next) {
+  fastify.register(require("./role-route"));
+  fastify.register(require("./role-permission-route"));
+  fastify.register(require("./employee-route"));
+  fastify.register(require("./login-route"));
+  fastify.register(require("./page-route"));
+  fastify.register(require("./user-route"));
+  fastify.register(require("./upload-route"));
+  fastify.register(require("./company-route"));
+  fastify.register(require("./department-route"));
+  fastify.register(require("./designation-route"));
+  fastify.register(require("./expo-route"));
+  fastify.register(require("./product-route"));
+  fastify.register(require("./product-enquiry-route"));
+  fastify.register(require("./dashboard-route"))
+  next();
+};
