@@ -1,7 +1,7 @@
 {
-  "name": "chit-fund-software",
+  "name": "logistics-software",
   "version": "1.0.0",
-  "description": "A Rest Api for chit-fund with nodejs and database as my-sql",
+  "description": "A Rest Api for logistics with nodejs and database as my-sql",
   "main": "server.js",
   "scripts": {
     "start": "node server",

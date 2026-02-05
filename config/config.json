@@ -1,9 +1,17 @@
 {
-  "development": {
+  "development1": {
     "username": "root",
     "password": null,
     "database": "sms_logistics",
     "host": "localhost",
+    "dialect": "mysql",
+    "timezone": "+05:30"
+  },
+   "development": {
+    "username": "sms_logistics",
+    "password": "JacB)dwKJ*/fjWPu",
+    "database": "sms_logistics",
+    "host": "194.195.115.123",
     "dialect": "mysql",
     "timezone": "+05:30"
   },
@@ -17,7 +25,7 @@
   },
   "production": {
     "username": "sms_logistics",
-    "password": "DT/6kpab/6I5sng5",
+    "password": "JacB)dwKJ*/fjWPu",
     "database": "sms_logistics",
     "host": "194.195.115.123",
     "dialect": "mysql",
