@@ -45,6 +45,9 @@ db.User = require("./user")(sequelize, Sequelize.DataTypes);
 db.Company = require("./company")(sequelize, Sequelize.DataTypes);
 db.Product = require("./product")(sequelize, Sequelize.DataTypes);
 db.ProductEnquiry = require("./product-enquiry")(sequelize, Sequelize.DataTypes);
+db.designation = require("./designation")(sequelize, Sequelize.DataTypes);
+db.VehicleType = require("./vehicle-type")(sequelize, Sequelize.DataTypes);
+db.Vehicle = require("./vehicle")(sequelize, Sequelize.DataTypes);
 
 Object.keys(db).forEach((modelName) => {
   if (db[modelName].associate) {
