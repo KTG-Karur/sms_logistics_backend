@@ -14,6 +14,8 @@ module.exports = function routesPlugin(fastify, opts, next) {
   fastify.register(require("./expo-route"));
   fastify.register(require("./product-route"));
   fastify.register(require("./product-enquiry-route"));
-  fastify.register(require("./dashboard-route"))
+  fastify.register(require("./dashboard-route"));
+  fastify.register(require("./vehicle-type-route"));
+  fastify.register(require("./vehicle-route"));
   next();
 };
