@@ -4,6 +4,7 @@ const messages = require("../helpers/message");
 const _ = require("lodash");
 const { Op } = require("sequelize");
 const { VehicleType, Vehicle } = require("../models");
+const sequelize = require("../models").sequelize;
 
 async function getVehicle(query, needIsActive = true) {
   try {
@@ -341,60 +342,9 @@ async function deleteVehicle(vehicleId) {
   }
 }
 
-// Additional function to get vehicles with expiring documents
-async function getVehiclesWithExpiringDocuments(daysThreshold = 30) {
-  try {
-    const currentDate = new Date();
-    const thresholdDate = new Date();
-    thresholdDate.setDate(currentDate.getDate() + daysThreshold);
-
-    const vehicles = await Vehicle.findAll({
-      where: {
-        is_active: 1,
-        [Op.or]: [
-          {
-            rc_expiry_date: {
-              [Op.between]: [currentDate, thresholdDate],
-            },
-          },
-          {
-            insurance_expiry_date: {
-              [Op.between]: [currentDate, thresholdDate],
-            },
-          },
-        ],
-      },
-      include: [
-        {
-          model: VehicleType,
-          as: "vehicleType",
-          attributes: ["vehicle_type_name"],
-        },
-      ],
-      attributes: [
-        "vehicle_id",
-        "vehicle_number_plate",
-        "rc_number",
-        "rc_expiry_date",
-        "insurance_number",
-        "insurance_expiry_date",
-      ],
-      order: [
-        ["rc_expiry_date", "ASC"],
-        ["insurance_expiry_date", "ASC"],
-      ],
-    });
-
-    return vehicles;
-  } catch (error) {
-    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
-  }
-}
-
 module.exports = {
   getVehicle,
   updateVehicle,
   createVehicle,
   deleteVehicle,
-  getVehiclesWithExpiringDocuments,
 };

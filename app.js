@@ -13,8 +13,10 @@ const fs = require('fs');
 fastify.register(require("@fastify/multipart"), {
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB limit
-    files: 1, // Max 1 file per request
+    files: 10, // Max 10 file per request
   },
+  attachFieldsToBody: true, // This attaches form fields to req.body
+  sharedSchemaId: "#multipartSchema"
 });
 
 //Swagger Docs---->

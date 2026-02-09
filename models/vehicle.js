@@ -114,15 +114,15 @@ module.exports = (sequelize, DataTypes) => {
       rc_upload: {
         type: DataTypes.STRING(500),
         allowNull: true,
-        validate: {
-          isUrl: {
-            msg: "RC upload must be a valid URL",
-            args: {
-              protocols: ["http", "https"],
-              require_protocol: true,
-            },
-          },
-        },
+        // validate: {
+        //   isUrl: {
+        //     msg: "RC upload must be a valid URL",
+        //     args: {
+        //       protocols: ["http", "https"],
+        //       require_protocol: true,
+        //     },
+        //   },
+        // },
       },
       is_active: {
         type: DataTypes.BOOLEAN,
