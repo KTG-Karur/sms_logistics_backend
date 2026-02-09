@@ -1,5 +1,7 @@
-"use strict";
-const { defaultKeys, migrationDefaults } = require("../sequelize/defaults");
+'use strict';
+
+const { migrationDefaults } = require('../sequelize/defaults');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
@@ -18,40 +20,84 @@ module.exports = {
       },
       employee_name: {
         type: Sequelize.STRING,
+        allowNull: false,
       },
       mobile_no: {
-        type: Sequelize.STRING,
+        type: Sequelize.STRING(10),
+        allowNull: false,
       },
       address_i: {
         type: Sequelize.STRING,
-      },
-      address_ii: {
-        type: Sequelize.STRING,
+        allowNull: true,
       },
       pincode: {
-        type: Sequelize.STRING,
+        type: Sequelize.STRING(6),
+        allowNull: true,
       },
       role_id: {
         type: Sequelize.STRING,
+        allowNull: true,
       },
       department_id: {
         type: Sequelize.STRING,
+        allowNull: true,
       },
       is_authenticated: {
         allowNull: false,
         type: Sequelize.BOOLEAN,
         defaultValue: 0,
       },
+      is_driver: {
+        allowNull: false,
+        type: Sequelize.BOOLEAN,
+        defaultValue: 0,
+      },
+      has_salary: {
+        allowNull: false,
+        type: Sequelize.BOOLEAN,
+        defaultValue: 0,
+      },
+      is_loadman: {
+        allowNull: false,
+        type: Sequelize.BOOLEAN,
+        defaultValue: 0,
+      },
+      salary: {
+        type: Sequelize.DECIMAL(10, 2),
+        allowNull: true,
+      },
+      licence_number: {
+        type: Sequelize.STRING(50),
+        allowNull: true,
+      },
+      licence_image: {
+        type: Sequelize.STRING(500),
+        allowNull: true,
+        comment: 'URL/link to the uploaded licence image',
+      },
       user_id: {
         type: Sequelize.STRING,
+        allowNull: true,
         references: {
           model: "users",
           key: "user_id",
         },
+        onUpdate: 'CASCADE',
+        onDelete: 'SET NULL',
       },
       ...migrationDefaults(),
     });
+
+    // Add indexes for better performance
+    await queryInterface.addIndex('employees', ['mobile_no'], { unique: true });
+    await queryInterface.addIndex('employees', ['employee_name']);
+    await queryInterface.addIndex('employees', ['role_id']);
+    await queryInterface.addIndex('employees', ['is_driver']);
+    await queryInterface.addIndex('employees', ['is_authenticated']);
+    await queryInterface.addIndex('employees', ['licence_number']);
+    await queryInterface.addIndex('employees', ['user_id']);
   },
+
   async down(queryInterface, Sequelize) {
     await queryInterface.dropTable("employees");
   },
