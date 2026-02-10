@@ -184,23 +184,23 @@ async function createEmployeeWithUpload(req, res) {
       }
       
       // Conditional validation
-      if (formData.is_authenticated && !formData.role_id) {
+      if ((formData.is_authenticated=='1'||formData.is_authenticated==true) && !formData.role_id) {
         throw new Error("Role is required when authentication is enabled");
       }
       
-      if (formData.is_driver && !formData.licence_number) {
+      if ((formData.is_authenticated=='1'||formData.is_authenticated==true) && !formData.licence_number) {
         throw new Error("Licence number is required for driver");
       }
       
-      if (formData.has_salary && (!formData.salary || formData.salary <= 0)) {
+      if ((formData.is_authenticated=='1'||formData.is_authenticated==true)  && (!formData.salary || formData.salary <= 0)) {
         throw new Error("Salary is required when Has Salary is enabled");
       }
       
-      if (formData.is_authenticated && !formData.username) {
+      if ((formData.is_authenticated=='1'||formData.is_authenticated==true) && !formData.username) {
         throw new Error("Username is required when authentication is enabled");
       }
       
-      if (formData.is_authenticated && !formData.password) {
+      if ((formData.is_authenticated=='1'||formData.is_authenticated==true)  && !formData.password) {
         throw new Error("Password is required when authentication is enabled");
       }
       
