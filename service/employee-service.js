@@ -294,7 +294,7 @@ async function updateEmployee(employeeId, putData) {
     }
     
     // Check for duplicate licence number for drivers (excluding current record)
-    if (putData.is_driver && putData.licence_number) {
+    if (putData.is_driver &&((putData.is_driver=='1'||putData.is_driver==true)) && putData.licence_number) {
       const duplicateDriver = await Employee.findOne({
         where: {
           licence_number: putData.licence_number,
@@ -312,7 +312,7 @@ async function updateEmployee(employeeId, putData) {
     let userId = existingEmployee.user_id;
     
     // Handle user creation/update based on authentication status
-    if (putData.is_authenticated) {
+    if (putData.is_authenticated &&(putData.is_authenticated=='1'||putData.is_authenticated==true)) {
       if (!putData.username) {
         throw new Error("Username is required when authentication is enabled");
       }
