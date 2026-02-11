@@ -184,19 +184,19 @@ async function createEmployeeWithUpload(req, res) {
       }
       
       // Conditional validation
-      if (formData.is_authenticated == '1' || formData.is_authenticated == true && !formData.role_id) {
+      if ((formData.is_authenticated == '1' || formData.is_authenticated == true) && !formData.role_id) {
       throw new Error("Role is required when authentication is enabled");
       }
       
-      if (formData.is_driver == '1' || formData.is_driver == true && !formData.licence_number) {
+      if ((formData.is_driver == '1' || formData.is_driver == true) && !formData.licence_number) {
         throw new Error("Licence number is required for driver");
       }
       
-      if (formData.has_salary == '1' || formData.has_salary == true && (!formData.salary || formData.salary <= 0)) {
+      if ((formData.has_salary == '1' || formData.has_salary == true) && (!formData.salary || formData.salary <= 0)) {
         throw new Error("Salary is required when Has Salary is enabled");
       }
       
-      if (formData.is_authenticated == '1' || formData.is_authenticated == true && !formData.username && !formData.password) {
+      if ((formData.is_authenticated == '1' || formData.is_authenticated == true) && !formData.username && !formData.password) {
         throw new Error("Username and password are required when authentication is enabled");
       }
       
@@ -322,19 +322,19 @@ async function updateEmployeeWithUpload(req, res) {
     }
     
     // Validate conditional requirements
-    if (formData.is_authenticated == '1' || formData.is_authenticated == true && !formData.role_id) {
+    if ((formData.is_authenticated == '1' || formData.is_authenticated == true) && !formData.role_id) {
       throw new Error("Role is required when authentication is enabled");
     }
     
-    if (formData.is_driver == '1' || formData.is_driver == true && !formData.licence_number) {
+    if ((formData.is_driver == '1' || formData.is_driver == true) && !formData.licence_number) {
       throw new Error("Licence number is required for driver");
     }
     
-    if (formData.has_salary == '1' || formData.has_salary == true && (!formData.salary || formData.salary <= 0)) {
+    if ((formData.has_salary == '1' || formData.has_salary == true) && (!formData.salary || formData.salary <= 0)) {
       throw new Error("Salary is required when Has Salary is enabled");
     }
     
-    if (formData.is_authenticated == '1' || formData.is_authenticated == true && !formData.username && !formData.password) {
+    if ((formData.is_authenticated == '1' || formData.is_authenticated == true) && !formData.username && !formData.password) {
       throw new Error("Username and password are required when authentication is enabled");
     }
     
