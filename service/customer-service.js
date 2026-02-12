@@ -167,31 +167,31 @@ async function deleteCustomer(customerId) {
   
   try {
     // Check if customer has associated vehicles
-    const vehicleCount = await Vehicle.count({
-      where: { customer_id: customerId, is_active: 1 },
-      transaction
-    });
+    // const vehicleCount = await Vehicle.count({
+    //   where: { customer_id: customerId, is_active: 1 },
+    //   transaction
+    // });
     
-    if (vehicleCount > 0) {
-      throw new Error("Cannot delete customer as they have associated vehicles");
-    }
+    // if (vehicleCount > 0) {
+    //   throw new Error("Cannot delete customer as they have associated vehicles");
+    // }
     
-    // Check if customer has active bookings
-    const bookingCount = await Booking.count({
-      where: { 
-        customer_id: customerId,
-        [Op.or]: [
-          { status: 'pending' },
-          { status: 'confirmed' },
-          { status: 'in-progress' }
-        ]
-      },
-      transaction
-    });
+    // // Check if customer has active bookings
+    // const bookingCount = await Booking.count({
+    //   where: { 
+    //     customer_id: customerId,
+    //     [Op.or]: [
+    //       { status: 'pending' },
+    //       { status: 'confirmed' },
+    //       { status: 'in-progress' }
+    //     ]
+    //   },
+    //   transaction
+    // });
     
-    if (bookingCount > 0) {
-      throw new Error("Cannot delete customer as they have active bookings");
-    }
+    // if (bookingCount > 0) {
+    //   throw new Error("Cannot delete customer as they have active bookings");
+    // }
     
     const [affectedCount] = await Customer.update(
       { is_active: 0 },
