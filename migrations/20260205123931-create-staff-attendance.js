@@ -25,7 +25,7 @@ module.exports = {
         allowNull: false
       },
       attendance_status: {
-        type: Sequelize.ENUM('present', 'absent'),
+        type: Sequelize.ENUM('present', 'absent', 'halfday'),
         defaultValue: 'absent'
       },
       ...migrationDefaults(),

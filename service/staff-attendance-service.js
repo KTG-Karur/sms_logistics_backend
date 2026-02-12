@@ -147,6 +147,7 @@ async function getStaffAttendanceList(query) {
         totalWorkingDays: 0,
         presentCount: 0,
         absentCount: 0,
+        halfdayCount: 0,
         dailyStatus: {},
       };
 
@@ -173,6 +174,8 @@ async function getStaffAttendanceList(query) {
             employeeAttendance.presentCount++;
           } else if (record.attendanceStatus === 'absent') {
             employeeAttendance.absentCount++;
+          } else if (record.attendanceStatus === 'halfday') {
+            employeeAttendance.halfdayCount++;
           }
           employeeAttendance.totalWorkingDays++;
         } else {
@@ -232,6 +235,7 @@ async function getStaffAttendanceReport(query) {
         '' "staffCode",
         COUNT(CASE WHEN ts.attendance_status = 'present' THEN 1 END) AS "presentDays",
         COUNT(CASE WHEN ts.attendance_status = 'absent' THEN 1 END) AS "absentDays",
+        COUNT(CASE WHEN ts.attendance_status = 'halfday' THEN 1 END) AS "halfdayDays",
         DAY(LAST_DAY('${moment(query.attendanceDate).format('YYYY-MM-DD')}')) "totalDays"
       FROM employees e
       LEFT JOIN staff_attendances ts ON ts.staff_id = e.employee_id 

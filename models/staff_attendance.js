@@ -3,7 +3,7 @@ const { Model, UUIDV4 } = require("sequelize");
 module.exports = (sequelize, DataTypes) => {
   class staff_attendance extends Model {
     static associate(models) {
-     this.belongsTo(models.Employee, {
+      this.belongsTo(models.Employee, {
         foreignKey: "created_by",
         targetKey: "employee_id",
         as: "createdBy",
@@ -40,7 +40,7 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
       },
       attendance_status: {
-        type: DataTypes.ENUM('present', 'absent'),
+        type: DataTypes.ENUM('present', 'absent', 'halfday'),
         defaultValue: 'absent',
       },
       createdAt: {
