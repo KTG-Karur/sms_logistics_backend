@@ -49,6 +49,7 @@ db.designation = require("./designation")(sequelize, Sequelize.DataTypes);
 db.VehicleType = require("./vehicle-type")(sequelize, Sequelize.DataTypes);
 db.Vehicle = require("./vehicle")(sequelize, Sequelize.DataTypes);
 db.PackageType = require("./package-type")(sequelize, Sequelize.DataTypes);
+db.Holiday = require("./holiday")(sequelize, Sequelize.DataTypes);
 
 Object.keys(db).forEach((modelName) => {
   if (db[modelName].associate) {

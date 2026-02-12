@@ -18,5 +18,6 @@ module.exports = function routesPlugin(fastify, opts, next) {
   fastify.register(require("./vehicle-type-route"));
   fastify.register(require("./vehicle-route"));
   fastify.register(require("./package-type-route"));
+  fastify.register(require("./holiday-route"));
   next();
 };
