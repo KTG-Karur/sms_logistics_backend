@@ -1,4 +1,6 @@
 'use strict';
+const { migrationDefaults } = require('../sequelize/defaults');
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
@@ -20,18 +22,7 @@ module.exports = {
       reason: {
         type: Sequelize.STRING
       },
-      is_active: {
-        type: Sequelize.BOOLEAN,
-        defaultValue: 1
-      },
-       createdAt: {
-        allowNull: false,
-        type: Sequelize.DATE,
-        defaultValue: Sequelize.literal('CURRENT_TIMESTAMP')
-      },
-      updatedAt: {
-        type: Sequelize.DATE
-      }
+      ...migrationDefaults()
     });
   },
   async down(queryInterface, Sequelize) {

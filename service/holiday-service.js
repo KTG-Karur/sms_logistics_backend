@@ -17,7 +17,7 @@ async function getHoliday(query) {
         iql += ` holiday_id = '${query.holidayId}'`;
       }
     }
-    const result = await sequelize.query(`SELECT holiday_id "holidayId", is_active "isActive", holiday_date "holidayDate", reason, createdAt FROM holidays ${iql}`, {
+    const result = await sequelize.query(`SELECT holiday_id "holidayId", is_active "isActive", holiday_date "holidayDate", reason, created_at "createdAt" , created_by "createdBy" , updated_at "updatedAt", 	updated_by "updatedBy",	deleted_at "deletedAt"	FROM holidays ${iql}`, {
       type: QueryTypes.SELECT,
       raw: true,
       nest: false
