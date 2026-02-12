@@ -52,6 +52,8 @@ db.PackageType = require("./package-type")(sequelize, Sequelize.DataTypes);
 db.Holiday = require("./holiday")(sequelize, Sequelize.DataTypes);
 db.StaffAttendance = require("./staff_attendance")(sequelize, Sequelize.DataTypes);
 
+db.Customer = require("./customer")(sequelize, Sequelize.DataTypes); 
+db.OfficeCenter = require("./office-center")(sequelize, Sequelize.DataTypes); 
 Object.keys(db).forEach((modelName) => {
   if (db[modelName].associate) {
     db[modelName].associate(db);
