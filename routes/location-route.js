@@ -5,28 +5,35 @@ const { verifyToken } = require("../middleware/auth");
 const { ResponseEntry } = require("../helpers/construct-response");
 const responseCode = require("../helpers/status-code");
 const messages = require("../helpers/message");
-const officeCenterServices = require("../service/office-center-service");
+const locationServices = require("../service/location-service");
 const _ = require("lodash");
 
 const schema = {
-  officeCenterName: {
+  locationName: {
     type: "string",
     min: 2,
     max: 100,
     optional: false,
     messages: {
-      stringEmpty: "Office center name is required",
-      stringMin: "Office center name must be at least 2 characters",
-      stringMax: "Office center name cannot exceed 100 characters"
+      stringEmpty: "Location name is required",
+      stringMin: "Location name must be at least 2 characters",
+      stringMax: "Location name cannot exceed 100 characters"
+    }
+  },
+  officeCenterId: {
+    type: "string",
+    optional: false,
+    messages: {
+      stringEmpty: "Office center ID is required"
     }
   }
 };
 
-async function getOfficeCenter(req, res) {
+async function getLocation(req, res) {
   const responseEntries = new ResponseEntry();
   
   try {
-    responseEntries.data = await officeCenterServices.getOfficeCenter(req.query);
+    responseEntries.data = await locationServices.getLocation(req.query);
     
     if (!responseEntries.data || responseEntries.data.length === 0) {
       responseEntries.message = messages.DATA_NOT_FOUND;
@@ -41,15 +48,15 @@ async function getOfficeCenter(req, res) {
   }
 }
 
-async function getOfficeCenterById(req, res) {
+async function getLocationById(req, res) {
   const responseEntries = new ResponseEntry();
   
   try {
-    if (!req.params.officeCenterId) {
-      throw new Error("Office center ID is required");
+    if (!req.params.locationId) {
+      throw new Error("Location ID is required");
     }
     
-    responseEntries.data = await officeCenterServices.getOfficeCenterById(req.params.officeCenterId);
+    responseEntries.data = await locationServices.getLocationById(req.params.locationId);
     
     if (!responseEntries.data) {
       responseEntries.message = messages.DATA_NOT_FOUND;
@@ -64,7 +71,30 @@ async function getOfficeCenterById(req, res) {
   }
 }
 
-async function createOfficeCenter(req, res) {
+async function getLocationsByOfficeCenter(req, res) {
+  const responseEntries = new ResponseEntry();
+  
+  try {
+    if (!req.params.officeCenterId) {
+      throw new Error("Office center ID is required");
+    }
+    
+    responseEntries.data = await locationServices.getLocationsByOfficeCenter(req.params.officeCenterId);
+    
+    if (!responseEntries.data || responseEntries.data.length === 0) {
+      responseEntries.message = messages.DATA_NOT_FOUND;
+    }
+  } catch (error) {
+    responseEntries.error = true;
+    responseEntries.message = error.message ? error.message : error;
+    responseEntries.code = error.code ? error.code : responseCode.BAD_REQUEST;
+    res.status(responseCode.BAD_REQUEST);
+  } finally {
+    res.send(responseEntries);
+  }
+}
+
+async function createLocation(req, res) {
   const responseEntries = new ResponseEntry();
   const v = new Validator();
   
@@ -75,12 +105,12 @@ async function createOfficeCenter(req, res) {
       const errorMessage = validationResponse.map(err => err.message).join(', ');
       throw new Error(errorMessage);
     } else {
-      responseEntries.data = await officeCenterServices.createOfficeCenter(req.body);
+      responseEntries.data = await locationServices.createLocation(req.body);
       
       if (!responseEntries.data) {
         responseEntries.message = messages.DATA_NOT_FOUND;
       } else {
-        responseEntries.message = "Office center created successfully";
+        responseEntries.message = "Location created successfully";
       }
     }
   } catch (error) {
@@ -93,13 +123,13 @@ async function createOfficeCenter(req, res) {
   }
 }
 
-async function updateOfficeCenter(req, res) {
+async function updateLocation(req, res) {
   const responseEntries = new ResponseEntry();
   const v = new Validator();
   
   try {
-    if (!req.params.officeCenterId) {
-      throw new Error("Office center ID is required");
+    if (!req.params.locationId) {
+      throw new Error("Location ID is required");
     }
     
     const filteredSchema = _.pick(schema, Object.keys(req.body));
@@ -114,15 +144,15 @@ async function updateOfficeCenter(req, res) {
       const errorMessage = validationResponse.map(err => err.message).join(', ');
       throw new Error(errorMessage);
     } else {
-      responseEntries.data = await officeCenterServices.updateOfficeCenter(
-        req.params.officeCenterId,
+      responseEntries.data = await locationServices.updateLocation(
+        req.params.locationId,
         req.body
       );
       
       if (!responseEntries.data) {
         responseEntries.message = messages.DATA_NOT_FOUND;
       } else {
-        responseEntries.message = "Office center updated successfully";
+        responseEntries.message = "Location updated successfully";
       }
     }
   } catch (error) {
@@ -135,16 +165,16 @@ async function updateOfficeCenter(req, res) {
   }
 }
 
-async function deleteOfficeCenter(req, res) {
+async function deleteLocation(req, res) {
   const responseEntries = new ResponseEntry();
   
   try {
-    if (!req.params.officeCenterId) {
-      throw new Error("Office center ID is required");
+    if (!req.params.locationId) {
+      throw new Error("Location ID is required");
     }
     
-    responseEntries.data = await officeCenterServices.deleteOfficeCenter(req.params.officeCenterId);
-    responseEntries.message = "Office center deleted successfully";
+    responseEntries.data = await locationServices.deleteLocation(req.params.locationId);
+    responseEntries.message = "Location deleted successfully";
   } catch (error) {
     responseEntries.error = true;
     responseEntries.message = error.message ? error.message : error;
@@ -154,104 +184,47 @@ async function deleteOfficeCenter(req, res) {
     res.send(responseEntries);
   }
 }
-
-/**
- * Get all office centers with their locations
- * Supports filtering by office center ID and search
- */
-async function getAllOfficeCentersWithLocations(req, res) {
-  const responseEntries = new ResponseEntry();
-  
-  try {
-    responseEntries.data = await officeCenterServices.getAllOfficeCentersWithLocations(req.query);
-    
-    if (!responseEntries.data || responseEntries.data.length === 0) {
-      responseEntries.message = messages.DATA_NOT_FOUND;
-    }
-  } catch (error) {
-    responseEntries.error = true;
-    responseEntries.message = error.message ? error.message : error;
-    responseEntries.code = responseCode.BAD_REQUEST;
-    res.status(responseCode.BAD_REQUEST);
-  } finally {
-    res.send(responseEntries);
-  }
-}
-
-/**
- * Get office center by ID with locations
- */
-async function getOfficeCenterWithLocationsById(req, res) {
-  const responseEntries = new ResponseEntry();
-  
-  try {
-    if (!req.params.officeCenterId) {
-      throw new Error("Office center ID is required");
-    }
-    
-    responseEntries.data = await officeCenterServices.getOfficeCenterWithLocationsById(req.params.officeCenterId);
-    
-    if (!responseEntries.data) {
-      responseEntries.message = messages.DATA_NOT_FOUND;
-    }
-  } catch (error) {
-    responseEntries.error = true;
-    responseEntries.message = error.message ? error.message : error;
-    responseEntries.code = error.code ? error.code : responseCode.BAD_REQUEST;
-    res.status(responseCode.BAD_REQUEST);
-  } finally {
-    res.send(responseEntries);
-  }
-}
-
 
 module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
-    url: "/office-centers",
+    url: "/locations",
     // preHandler: verifyToken,
-    handler: getOfficeCenter,
+    handler: getLocation,
   });
   
   fastify.route({
     method: "GET",
-    url: "/office-centers/:officeCenterId",
+    url: "/locations/:locationId",
     // preHandler: verifyToken,
-    handler: getOfficeCenterById,
+    handler: getLocationById,
+  });
+  
+  fastify.route({
+    method: "GET",
+    url: "/office-centers/:officeCenterId/locations",
+    // preHandler: verifyToken,
+    handler: getLocationsByOfficeCenter,
   });
   
   fastify.route({
     method: "POST",
-    url: "/office-centers",
+    url: "/locations",
     // preHandler: verifyToken,
-    handler: createOfficeCenter,
+    handler: createLocation,
   });
   
   fastify.route({
     method: "PUT",
-    url: "/office-centers/:officeCenterId",
+    url: "/locations/:locationId",
     // preHandler: verifyToken,
-    handler: updateOfficeCenter,
+    handler: updateLocation,
   });
   
   fastify.route({
     method: "DELETE",
-    url: "/office-centers/:officeCenterId",
+    url: "/locations/:locationId",
     // preHandler: verifyToken,
-    handler: deleteOfficeCenter,
-  });
-
-   fastify.route({
-    method: "GET",
-    url: "/office-centers/with-locations/all",
-    // preHandler: verifyToken,
-    handler: getAllOfficeCentersWithLocations,
-  });
-  
-  fastify.route({
-    method: "GET",
-    url: "/office-centers/:officeCenterId/with-locations",
-    // preHandler: verifyToken,
-    handler: getOfficeCenterWithLocationsById,
+    handler: deleteLocation,
   });
 };

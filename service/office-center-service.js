@@ -3,7 +3,7 @@
 const messages = require("../helpers/message");
 const _ = require("lodash");
 const { Op } = require("sequelize");
-const { OfficeCenter, Employee, Vehicle, Booking, sequelize } = require("../models");
+const { OfficeCenter, Employee, Vehicle, Booking,Location, sequelize } = require("../models");
 
 async function getOfficeCenter(query, needIsActive = true) {
   try {
@@ -273,10 +273,104 @@ async function getOfficeCenterById(officeCenterId) {
   }
 }
 
+/**
+ * Get all office centers with their locations
+ * Can filter by office center ID or search by name
+ */
+async function getAllOfficeCentersWithLocations(query = {}, needIsActive = true) {
+  try {
+    let whereClause = {};
+    
+    // Filter by office center ID if provided
+    if (query.officeCenterId) {
+      whereClause.office_center_id = query.officeCenterId;
+    }
+    
+    // Filter by active status
+    if (needIsActive) {
+      whereClause.is_active = 1;
+    }
+    
+    // Search by office center name
+    if (query.search) {
+      whereClause.office_center_name = { [Op.like]: `%${query.search}%` };
+    }
+
+    const officeCenters = await OfficeCenter.findAll({
+      where: whereClause,
+      attributes: [
+        'office_center_id',
+        'office_center_name',
+        'is_active',
+        'created_at',
+        'updated_at',
+        'created_by',
+        'updated_by'
+      ],
+      include: [
+        {
+          model: Location,
+          as: 'locations',
+          attributes: ['location_id', 'location_name', 'is_active', 'created_at', 'updated_at'],
+          where: { is_active: 1 },
+          required: false,
+          order: [['location_name', 'ASC']]
+        }
+      ],
+      order: [
+        ['created_at', 'DESC'],
+        [{ model: Location, as: 'locations' }, 'location_name', 'ASC']
+      ]
+    });
+    
+    return officeCenters;
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
+/**
+ * Get office center by ID with locations
+ */
+async function getOfficeCenterWithLocationsById(officeCenterId) {
+  try {
+    const officeCenter = await OfficeCenter.findOne({
+      where: { office_center_id: officeCenterId, is_active: 1 },
+      attributes: [
+        'office_center_id',
+        'office_center_name',
+        'is_active',
+        'created_at',
+        'updated_at'
+      ],
+      include: [
+        {
+          model: Location,
+          as: 'locations',
+          attributes: ['location_id', 'location_name', 'is_active', 'created_at', 'updated_at'],
+          where: { is_active: 1 },
+          required: false,
+          order: [['location_name', 'ASC']]
+        }
+      ]
+    });
+    
+    if (!officeCenter) {
+      throw new Error(messages.DATA_NOT_FOUND);
+    }
+    
+    return officeCenter;
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
 module.exports = {
   getOfficeCenter,
   updateOfficeCenter,
   createOfficeCenter,
   deleteOfficeCenter,
-  getOfficeCenterById
+  getOfficeCenterById,
+  getAllOfficeCentersWithLocations,
+  getOfficeCenterWithLocationsById
 };
