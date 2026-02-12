@@ -3,36 +3,32 @@
 const { Model, UUIDV4 } = require("sequelize");
 
 module.exports = (sequelize, DataTypes) => {
-  class OfficeCenter extends Model {
+  class Location extends Model {
     /**
      * Helper method for defining associations.
      */
     static associate(models) {
-      // office center has many employees
-    //   this.hasMany(models.Employee, {
-    //     foreignKey: 'office_center_id',
-    //     sourceKey: 'office_center_id',
-    //     as: 'employees'
-    //   });
+      // location belongs to office center
+      this.belongsTo(models.OfficeCenter, {
+        foreignKey: 'office_center_id',
+        targetKey: 'office_center_id',
+        as: 'officeCenter',
+        constraints: false
+      });
 
-      // office center has many vehicles
+    //   // location has many vehicles
     //   this.hasMany(models.Vehicle, {
-    //     foreignKey: 'office_center_id',
-    //     sourceKey: 'office_center_id',
+    //     foreignKey: 'location_id',
+    //     sourceKey: 'location_id',
     //     as: 'vehicles'
     //   });
 
-      // office center has many bookings
+    //   // location has many bookings
     //   this.hasMany(models.Booking, {
-    //     foreignKey: 'office_center_id',
-    //     sourceKey: 'office_center_id',
+    //     foreignKey: 'location_id',
+    //     sourceKey: 'location_id',
     //     as: 'bookings'
     //   });
-      this.hasMany(models.Location, {
-    foreignKey: 'office_center_id',
-    sourceKey: 'office_center_id',
-    as: 'locations'
-  });
 
       this.belongsTo(models.Employee, {
         foreignKey: "created_by",
@@ -50,28 +46,37 @@ module.exports = (sequelize, DataTypes) => {
     }
   }
 
-  OfficeCenter.init(
+  Location.init(
     {
       id: {
         type: DataTypes.INTEGER,
         primaryKey: true,
         autoIncrement: true,
       },
-      office_center_id: {
+      location_id: {
         type: DataTypes.STRING,
         primaryKey: true,
         defaultValue: UUIDV4,
       },
-      office_center_name: {
+      location_name: {
         type: DataTypes.STRING,
         allowNull: false,
         validate: {
           notEmpty: {
-            msg: "Office center name is required"
+            msg: "Location name is required"
           },
           len: {
             args: [2, 100],
-            msg: "Office center name must be between 2 and 100 characters"
+            msg: "Location name must be between 2 and 100 characters"
+          }
+        }
+      },
+      office_center_id: {
+        type: DataTypes.STRING,
+        allowNull: false,
+        validate: {
+          notEmpty: {
+            msg: "Office center ID is required"
           }
         }
       },
@@ -102,18 +107,27 @@ module.exports = (sequelize, DataTypes) => {
     },
     {
       sequelize,
-      modelName: "OfficeCenter",
-      tableName: "office_center",
+      modelName: "Location",
+      tableName: "location",
       timestamps: true,
       paranoid: true,
       indexes: [
         {
-          fields: ['office_center_name'],
-          name: 'idx_office_center_name'
+          fields: ['location_name'],
+          name: 'idx_location_name'
+        },
+        {
+          fields: ['office_center_id'],
+          name: 'idx_location_office_center_id'
+        },
+        {
+          fields: ['location_name', 'office_center_id'],
+          name: 'idx_location_name_office_center',
+          unique: false
         }
       ]
     }
   );
 
-  return OfficeCenter;
+  return Location;
 };
