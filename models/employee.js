@@ -146,6 +146,17 @@ module.exports = (sequelize, DataTypes) => {
           },
         },
       },
+       salary_type: { 
+        type: DataTypes.STRING(50),
+        allowNull: true,
+        defaultValue: 'monthly',
+        validate: {
+          isIn: {
+            args: [['daily', 'weekly', 'monthly', 'yearly', 'hourly', 'per_hour']],
+            msg: "Salary type must be one of: daily, weekly, monthly, yearly, hourly, per_hour",
+          },
+        },
+      },
       licence_number: {
         type: DataTypes.STRING(50),
         allowNull: true,
