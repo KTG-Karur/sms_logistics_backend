@@ -23,5 +23,6 @@ module.exports = function routesPlugin(fastify, opts, next) {
   fastify.register(require("./customer-route"));
   fastify.register(require("./office-center-route"));
   fastify.register(require("./location-route"));
+  fastify.register(require("./expence-type-route"));
   next();
 };
