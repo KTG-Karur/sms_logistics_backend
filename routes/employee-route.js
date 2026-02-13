@@ -81,6 +81,15 @@ const schema = {
       numberMin: "Salary must be greater than or equal to 0",
     },
   },
+   salary_type: {  
+    type: "string",
+    optional: true,
+    enum: ["daily", "weekly", "monthly", "yearly", "hourly", "per_hour"],
+    default: "monthly",
+    messages: {
+      stringEnum: "Salary type must be one of: daily, weekly, monthly, yearly, hourly, per_hour",
+    },
+  },
   licence_number: {
     type: "string",
     optional: true,
@@ -195,6 +204,14 @@ async function createEmployeeWithUpload(req, res) {
       if ((formData.has_salary == '1' || formData.has_salary == true) && (!formData.salary || formData.salary <= 0)) {
         throw new Error("Salary is required when Has Salary is enabled");
       }
+      if ((formData.has_salary == '1' || formData.has_salary == true)) {
+  if (!formData.salary || formData.salary <= 0) {
+    throw new Error("Salary is required when Has Salary is enabled");
+  }
+  if (!formData.salary_type) {  // ✅ ADD THIS VALIDATION
+    throw new Error("Salary type is required when salary is enabled");
+  }
+}
       
       if ((formData.is_authenticated == '1' || formData.is_authenticated == true) && !formData.username && !formData.password) {
         throw new Error("Username and password are required when authentication is enabled");

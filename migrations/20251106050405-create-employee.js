@@ -1,5 +1,4 @@
 'use strict';
-
 const { migrationDefaults } = require('../sequelize/defaults');
 
 /** @type {import('sequelize-cli').Migration} */
@@ -66,6 +65,12 @@ module.exports = {
         type: Sequelize.DECIMAL(10, 2),
         allowNull: true,
       },
+      salary_type: {  // ✅ NEW FIELD ADDED
+        type: Sequelize.STRING(50),
+        allowNull: true,
+        defaultValue: 'monthly',
+        comment: 'Salary type: daily, weekly, monthly, yearly',
+      },
       licence_number: {
         type: Sequelize.STRING(50),
         allowNull: true,
@@ -96,6 +101,7 @@ module.exports = {
     await queryInterface.addIndex('employees', ['is_authenticated']);
     await queryInterface.addIndex('employees', ['licence_number']);
     await queryInterface.addIndex('employees', ['user_id']);
+    await queryInterface.addIndex('employees', ['salary_type']); // ✅ NEW INDEX
   },
 
   async down(queryInterface, Sequelize) {
