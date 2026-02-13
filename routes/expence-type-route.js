@@ -81,20 +81,20 @@ async function updateExpenceType(req, res) {
 module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
-    url: "/expenceType",
+    url: "/expence-types",
     // preHandler: verifyToken,
     handler: getExpenceType,
   });
   fastify.route({
     method: "POST",
-    url: "/expenceType",
+    url: "/expence-types",
     // preHandler: verifyToken,
     handler: createExpenceType,
   });
 
   fastify.route({
     method: "PUT",
-    url: "/expenceType/:expenceTypeId",
+    url: "/expence-types/:expenceTypeId",
     // preHandler: verifyToken,
     handler: updateExpenceType,
   });
