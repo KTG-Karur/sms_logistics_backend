@@ -1,6 +1,5 @@
 "use strict";
-
-const Validator = require('fastest-validator')
+const Validator = require('fastest-validator');
 const { verifyToken } = require("../middleware/auth");
 const { ResponseEntry } = require("../helpers/construct-response");
 const responseCode = require("../helpers/status-code");
@@ -9,14 +8,18 @@ const holidayServices = require("../service/holiday-service");
 const _ = require('lodash');
 
 const schema = {
-    //reason: { type: "string", optional: false, min: 1, max: 100 }
-}
+    reason: { type: "string", optional: false, min: 1, max: 100 },
+    holiday_date: { type: "string", optional: false },
+    is_active: { type: "number", optional: true, default: 1 }
+};
 
 async function getHoliday(req, res) {
     const responseEntries = new ResponseEntry();
     try {
         responseEntries.data = await holidayServices.getHoliday(req.query);
-        if (!responseEntries.data) responseEntries.message = messages.DATA_NOT_FOUND;
+        if (!responseEntries.data || responseEntries.data.length === 0) {
+            responseEntries.message = messages.DATA_NOT_FOUND;
+        }
     } catch (error) {
         responseEntries.error = true;
         responseEntries.message = error.message ? error.message : error;
@@ -29,14 +32,17 @@ async function getHoliday(req, res) {
 
 async function createHoliday(req, res) {
     const responseEntries = new ResponseEntry();
-    const v = new Validator()
+    const v = new Validator();
+    
     try {
-        const validationResponse = await v.validate(req.body, schema)
-        if (validationResponse != true) {
+        const validationResponse = await v.validate(req.body, schema);
+        if (validationResponse !== true) {
             throw new Error(messages.VALIDATION_FAILED);
-        } else {
-            responseEntries.data = await holidayServices.createHoliday(req.body);
-            if (!responseEntries.data) responseEntries.message = messages.DATA_NOT_FOUND;
+        }
+        
+        responseEntries.data = await holidayServices.createHoliday(req.body);
+        if (!responseEntries.data) {
+            responseEntries.message = messages.DATA_NOT_FOUND;
         }
     } catch (error) {
         responseEntries.error = true;
@@ -50,15 +56,19 @@ async function createHoliday(req, res) {
 
 async function updateHoliday(req, res) {
     const responseEntries = new ResponseEntry();
-    const v = new Validator()
+    const v = new Validator();
+    
     try {
         const filteredSchema = _.pick(schema, Object.keys(req.body));
-        const validationResponse = v.validate(req.body, filteredSchema)
-        if (validationResponse != true) {
+        const validationResponse = v.validate(req.body, filteredSchema);
+        
+        if (validationResponse !== true) {
             throw new Error(messages.VALIDATION_FAILED);
-        } else {
-            responseEntries.data = await holidayServices.updateHoliday(req.params.holidayId, req.body);
-            if (!responseEntries.data) responseEntries.message = messages.DATA_NOT_FOUND;
+        }
+        
+        responseEntries.data = await holidayServices.updateHoliday(req.params.holidayId, req.body);
+        if (!responseEntries.data) {
+            responseEntries.message = messages.DATA_NOT_FOUND;
         }
     } catch (error) {
         responseEntries.error = true;
@@ -70,6 +80,21 @@ async function updateHoliday(req, res) {
     }
 }
 
+// Add delete holiday function
+async function deleteHoliday(req, res) {
+    const responseEntries = new ResponseEntry();
+    try {
+        responseEntries.data = await holidayServices.deleteHoliday(req.params.holidayId);
+        responseEntries.message = messages.DELETE_SUCCESS;
+    } catch (error) {
+        responseEntries.error = true;
+        responseEntries.message = error.message ? error.message : error;
+        responseEntries.code = responseCode.BAD_REQUEST;
+        res.status(responseCode.BAD_REQUEST);
+    } finally {
+        res.send(responseEntries);
+    }
+}
 
 module.exports = async function (fastify) {
     fastify.route({
@@ -91,5 +116,13 @@ module.exports = async function (fastify) {
         url: '/holiday/:holidayId',
         // preHandler: verifyToken,
         handler: updateHoliday
+    });
+
+    // Add DELETE route
+    fastify.route({
+        method: 'DELETE',
+        url: '/holiday/:holidayId',
+        // preHandler: verifyToken,
+        handler: deleteHoliday
     });
 };
