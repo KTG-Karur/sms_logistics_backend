@@ -1,8 +1,17 @@
 "use strict";
 const { Model, UUIDV4 } = require("sequelize");
 module.exports = (sequelize, DataTypes) => {
-  class staff_attendance extends Model {
+  class expence_type extends Model {
+    /**
+     * Helper method for defining associations.
+     * This method is not a part of Sequelize lifecycle.
+     * The `models/index` file will call this method automatically.
+     */
     static associate(models) {
+      // expence_type.hasMany(models.employee, {
+      //   foreignKey: 'expence_type_id'
+      // });
+
       this.belongsTo(models.Employee, {
         foreignKey: "created_by",
         targetKey: "employee_id",
@@ -18,42 +27,34 @@ module.exports = (sequelize, DataTypes) => {
       });
     }
   }
-  
-  staff_attendance.init(
+  expence_type.init(
     {
       id: {
         type: DataTypes.INTEGER,
         primaryKey: true,
         autoIncrement: true,
       },
-      staff_attendance_id: {
+      expence_type_id: {
         type: DataTypes.STRING,
         primaryKey: true,
         defaultValue: UUIDV4,
       },
-      attendance_date: {
-        type: DataTypes.DATEONLY,
-        allowNull: false,
-      },
-      staff_id: {
-        type: DataTypes.STRING,
-        allowNull: false,
-      },
-      attendance_status: {
-        type: DataTypes.ENUM('present', 'absent', 'halfday'),
-        defaultValue: 'absent',
+      expence_type_name: DataTypes.STRING,
+      is_active: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: 1,
       },
       createdAt: {
         type: DataTypes.DATE,
         field: "created_at",
       },
-      updatedAt: {
-        type: DataTypes.DATE,
-        field: "updated_at",
-      },
       deletedAt: {
         type: DataTypes.DATE,
         field: "deleted_at",
+      },
+      updatedAt: {
+        type: DataTypes.DATE,
+        field: "updated_at",
       },
       created_by: {
         type: DataTypes.STRING,
@@ -66,11 +67,9 @@ module.exports = (sequelize, DataTypes) => {
     },
     {
       sequelize,
-      modelName: "staff_attendance",
-      tableName: "staff_attendances",
-      underscored: true,
-      paranoid: true,
+      modelName: "expence_type",
+      tableName: "expence_type",
     }
   );
-  return staff_attendance;
+  return expence_type;
 };

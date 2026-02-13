@@ -1,37 +1,30 @@
 'use strict';
+
 const { migrationDefaults } = require('../sequelize/defaults');
 
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.createTable('staff_attendances', {
+    await queryInterface.createTable('expence_type', {
       id: {
         allowNull: false,
         autoIncrement: true,
         primaryKey: true,
         type: Sequelize.INTEGER
       },
-      staff_attendance_id: {
+      expence_type_id: {
         allowNull: false,
-        unique: true,
+        primaryKey: true,
         type: Sequelize.STRING
       },
-      attendance_date: {
-        type: Sequelize.DATEONLY,
-        allowNull: false
-      },
-      staff_id: {
+      expence_type_name: {
+        allowNull: false,
         type: Sequelize.STRING,
-        allowNull: false
-      },
-      attendance_status: {
-        type: Sequelize.ENUM('present', 'absent', 'halfday'),
-        defaultValue: 'absent'
       },
       ...migrationDefaults(),
     });
   },
   async down(queryInterface, Sequelize) {
-    await queryInterface.dropTable('staff_attendances');
+    await queryInterface.dropTable('expence_type');
   }
 };

@@ -60,6 +60,7 @@ async function getEmployee(query, needIsActive = true) {
         "has_salary",
         "is_loadman",
         "salary",
+         "salary_type",
         "licence_number",
         "licence_image",
         "user_id",
@@ -120,6 +121,7 @@ async function getEmployee(query, needIsActive = true) {
         hasSalary: employeeData.has_salary,
         isLoadman: employeeData.is_loadman,
         salary: employeeData.salary,
+        salaryType: employeeData.salary_type,
         licenceNumber: employeeData.licence_number,
         licenceImage: employeeData.licence_image,
         userId: employeeData.user_id,
@@ -228,6 +230,7 @@ async function createEmployee(postData) {
       has_salary: postData.has_salary || false,
       is_loadman: postData.is_loadman || false,
       salary: postData.has_salary && postData.salary ? parseFloat(postData.salary) : null,
+      salary_type: postData.has_salary ? (postData.salary_type || 'monthly') : null,
       licence_number: postData.is_driver && postData.licence_number ? postData.licence_number : null,
       licence_image: postData.licence_image || null,
       user_id: userId,
@@ -391,6 +394,9 @@ async function updateEmployee(employeeId, putData) {
     if (putData.salary !== undefined) {
       updateData.salary = (putData.has_salary && putData.salary) ? parseFloat(putData.salary) : null;
     }
+    if (putData.salary_type !== undefined) {  // ✅ NEW FIELD
+  updateData.salary_type = putData.has_salary ? putData.salary_type : null;
+}
     
     if (putData.licence_number !== undefined) {
       updateData.licence_number = (putData.is_driver && putData.licence_number) ? putData.licence_number : null;

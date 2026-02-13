@@ -1,37 +1,36 @@
 'use strict';
+
 const { migrationDefaults } = require('../sequelize/defaults');
 
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    await queryInterface.createTable('staff_attendances', {
+    await queryInterface.createTable('office_center', {
       id: {
         allowNull: false,
         autoIncrement: true,
         primaryKey: true,
         type: Sequelize.INTEGER
       },
-      staff_attendance_id: {
+      office_center_id: {
         allowNull: false,
         unique: true,
         type: Sequelize.STRING
       },
-      attendance_date: {
-        type: Sequelize.DATEONLY,
-        allowNull: false
-      },
-      staff_id: {
+      office_center_name: {
+        allowNull: false,
         type: Sequelize.STRING,
-        allowNull: false
-      },
-      attendance_status: {
-        type: Sequelize.ENUM('present', 'absent', 'halfday'),
-        defaultValue: 'absent'
       },
       ...migrationDefaults(),
     });
+
+    // Add index for faster lookups
+    await queryInterface.addIndex('office_center', ['office_center_name'], {
+      name: 'idx_office_center_name'
+    });
   },
+
   async down(queryInterface, Sequelize) {
-    await queryInterface.dropTable('staff_attendances');
+    await queryInterface.dropTable('office_center');
   }
 };
