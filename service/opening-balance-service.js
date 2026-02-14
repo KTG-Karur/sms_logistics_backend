@@ -211,9 +211,97 @@ async function deleteOpeningBalance(openingBalanceId) {
   }
 }
 
+/**
+ * Bulk create opening balances - SIMPLIFIED FIXED VERSION
+ */
+async function bulkCreateOpeningBalances(balancesData) {
+  const transaction = await sequelize.transaction();
+  
+  try {
+    const results = {
+      successful: [],
+      failed: []
+    };
+
+    // Process each opening balance sequentially for validation
+    for (const balanceData of balancesData) {
+      try {
+        const executeMethod = _.mapKeys(balanceData, (value, key) => _.snakeCase(key));
+
+        // Validate required fields
+        if (!executeMethod.date) {
+          throw new Error("Date is required");
+        }
+        
+        if (!executeMethod.office_center_id) {
+          throw new Error("Office center ID is required");
+        }
+        
+        if (!executeMethod.opening_balance && executeMethod.opening_balance !== 0) {
+          throw new Error("Opening balance is required");
+        }
+
+        // Check for duplicate
+        const existingBalance = await OpeningBalance.findOne({
+          where: {
+            date: executeMethod.date,
+            office_center_id: executeMethod.office_center_id,
+            is_active: 1
+          },
+          transaction
+        });
+
+        if (existingBalance) {
+          throw new Error(
+            `Opening balance already exists for date ${executeMethod.date} and office center ${executeMethod.office_center_id}`
+          );
+        }
+
+        // Create the opening balance
+        const balanceResult = await OpeningBalance.create(executeMethod, { transaction });
+
+        // Add to successful results with the data we have
+        results.successful.push({
+          opening_balance_id: balanceResult.opening_balance_id,
+          date: balanceResult.date,
+          office_center_id: balanceResult.office_center_id,
+          opening_balance: balanceResult.opening_balance,
+          notes: balanceResult.notes,
+          created_at: balanceResult.created_at,
+          updated_at: balanceResult.updated_at,
+          status: "success"
+        });
+
+      } catch (error) {
+        results.failed.push({
+          ...balanceData,
+          error: error.message,
+          status: "failed"
+        });
+      }
+    }
+
+    // If at least one was successful, commit the transaction
+    if (results.successful.length > 0) {
+      await transaction.commit();
+      return results;
+    } else {
+      await transaction.rollback();
+      throw new Error("All opening balance entries failed. No records were created.");
+    }
+
+  } catch (error) {
+    if (transaction && !transaction.finished) {
+      await transaction.rollback();
+    }
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
 module.exports = {
   getOpeningBalance,
   createOpeningBalance,
   updateOpeningBalance,
-  deleteOpeningBalance
+  deleteOpeningBalance,
+  bulkCreateOpeningBalances 
 };

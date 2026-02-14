@@ -1,4 +1,3 @@
-// routes/opening-balance-routes.js
 'use strict';
 
 const Validator = require("fastest-validator");
@@ -43,11 +42,50 @@ const schema = {
   }
 };
 
+const bulkSchema = {
+  balances: {
+    type: "array",
+    items: {
+      type: "object",
+      props: {
+        date: {
+          type: "string",
+          pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+          optional: false,
+          messages: {
+            stringPattern: "Date must be in YYYY-MM-DD format"
+          }
+        },
+        officeCenterId: {
+          type: "string",
+          optional: false
+        },
+        openingBalance: {
+          type: "number",
+          positive: true,
+          min: 0,
+          optional: false
+        },
+        notes: {
+          type: "string",
+          optional: true,
+          max: 500
+        }
+      }
+    },
+    min: 1,
+    max: 1000,
+    messages: {
+      arrayMin: "At least one opening balance entry is required",
+      arrayMax: "Cannot process more than 1000 entries at once"
+    }
+  }
+};
+
 async function getOpeningBalance(req, res) {
   const responseEntries = new ResponseEntry();
   
   try {
-    // Pass all query parameters to the service for filtering
     responseEntries.data = await openingBalanceServices.getOpeningBalance(req.query);
     
     if (!responseEntries.data || responseEntries.data.length === 0) {
@@ -82,6 +120,54 @@ async function createOpeningBalance(req, res) {
         responseEntries.message = "Opening balance created successfully";
       }
     }
+  } catch (error) {
+    responseEntries.error = true;
+    responseEntries.message = error.message ? error.message : error;
+    responseEntries.code = responseCode.BAD_REQUEST;
+    res.status(responseCode.BAD_REQUEST);
+  } finally {
+    res.send(responseEntries);
+  }
+}
+
+async function bulkCreateOpeningBalances(req, res) {
+  const responseEntries = new ResponseEntry();
+  const v = new Validator();
+  
+  try {
+    if (!req.body.balances || !Array.isArray(req.body.balances)) {
+      throw new Error("Request must contain a 'balances' array");
+    }
+
+    if (req.user && req.user.employee_id) {
+      req.body.balances = req.body.balances.map(balance => ({
+        ...balance,
+        created_by: req.user.employee_id
+      }));
+    }
+
+    const validationResponse = await v.validate(req.body, bulkSchema);
+    
+    if (validationResponse !== true) {
+      const errorMessage = validationResponse.map(err => err.message).join(', ');
+      throw new Error(errorMessage);
+    }
+
+    const result = await openingBalanceServices.bulkCreateOpeningBalances(req.body.balances);
+    
+    responseEntries.data = result;
+    responseEntries.message = `${result.successful.length} opening balances created successfully. ${result.failed.length} failed.`;
+    
+    if (result.failed.length > 0) {
+      responseEntries.warning = true;
+      responseEntries.summary = {
+        total_processed: req.body.balances.length,
+        successful: result.successful.length,
+        failed: result.failed.length,
+        failure_reasons: [...new Set(result.failed.map(f => f.error))]
+      };
+    }
+
   } catch (error) {
     responseEntries.error = true;
     responseEntries.message = error.message ? error.message : error;
@@ -155,7 +241,7 @@ async function deleteOpeningBalance(req, res) {
 }
 
 module.exports = async function (fastify) {
-  // Single GET endpoint with query parameters for filtering
+  // GET endpoint with query parameters for filtering
   fastify.route({
     method: "GET",
     url: "/opening-balances",
@@ -163,6 +249,7 @@ module.exports = async function (fastify) {
     handler: getOpeningBalance,
   });
   
+  // Create single opening balance
   fastify.route({
     method: "POST",
     url: "/opening-balances",
@@ -170,6 +257,15 @@ module.exports = async function (fastify) {
     handler: createOpeningBalance,
   });
   
+  // Bulk create opening balances
+  fastify.route({
+    method: "POST",
+    url: "/opening-balances/bulk",
+    // preHandler: verifyToken,
+    handler: bulkCreateOpeningBalances,
+  });
+  
+  // Update opening balance
   fastify.route({
     method: "PUT",
     url: "/opening-balances/:openingBalanceId",
@@ -177,6 +273,7 @@ module.exports = async function (fastify) {
     handler: updateOpeningBalance,
   });
   
+  // Delete opening balance
   fastify.route({
     method: "DELETE",
     url: "/opening-balances/:openingBalanceId",
