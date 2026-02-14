@@ -922,6 +922,122 @@ async function getBookingsByCustomer(customerId, type = 'sender') {
   }
 }
 
+/**
+ * Add additional payment to an existing booking
+ */
+async function addBookingPayment(bookingId, paymentData) {
+  const transaction = await sequelize.transaction();
+  
+  try {
+    // Find the booking
+    const booking = await Booking.findOne({
+      where: { booking_id: bookingId, is_active: 1 },
+      transaction
+    });
+    
+    if (!booking) {
+      throw new Error(messages.DATA_NOT_FOUND);
+    }
+    
+    // Check if booking is already fully paid
+    if (booking.due_amount <= 0) {
+      throw new Error("Booking is already fully paid");
+    }
+    
+    const paymentAmount = parseFloat(paymentData.amount);
+    
+    // Validate payment amount
+    if (paymentAmount <= 0) {
+      throw new Error("Payment amount must be greater than 0");
+    }
+    
+    if (paymentAmount > booking.due_amount) {
+      throw new Error(`Payment amount exceeds due amount. Due amount: ${booking.due_amount}`);
+    }
+    
+    // Determine payment type
+    let paymentType = 'partial';
+    if (paymentAmount >= booking.due_amount) {
+      paymentType = 'full';
+    }
+    
+    // Create payment record
+    const paymentRecord = {
+      payment_id: uuidv4(),
+      payment_number: Payment.generatePaymentNumber(),
+      booking_id: bookingId,
+      customer_id: paymentData.customerId || booking.from_customer_id, // Default to sender
+      amount: paymentAmount,
+      payment_date: paymentData.paymentDate || new Date().toISOString().split('T')[0],
+      payment_mode: paymentData.paymentMode || 'cash',
+      payment_type: paymentType,
+      description: paymentData.description || `Additional payment for booking ${booking.booking_number}`,
+      collected_by: paymentData.collectedBy || null,
+      collected_at_center: paymentData.collectedAtCenter || null,
+      status: 'completed',
+      is_active: 1
+    };
+    
+    const createdPayment = await Payment.create(paymentRecord, { transaction });
+    
+    // Update booking paid_amount and due_amount
+    const newPaidAmount = parseFloat(booking.paid_amount) + paymentAmount;
+    const newDueAmount = parseFloat(booking.total_amount) - newPaidAmount;
+    
+    await Booking.update(
+      {
+        paid_amount: newPaidAmount,
+        due_amount: newDueAmount,
+        payment_status: newDueAmount <= 0 ? 'completed' : (newPaidAmount > 0 ? 'partial' : 'pending')
+      },
+      {
+        where: { booking_id: bookingId },
+        transaction
+      }
+    );
+    
+    await transaction.commit();
+    
+    // Return updated booking with payments
+    const updatedBooking = await Booking.findOne({
+      where: { booking_id: bookingId },
+      attributes: [
+        'booking_id',
+        'booking_number',
+        'llr_number',
+        'total_amount',
+        'paid_amount',
+        'due_amount',
+        'payment_status'
+      ],
+      include: [
+        {
+          model: Payment,
+          as: 'payments',
+          attributes: [
+            'payment_id',
+            'payment_number',
+            'amount',
+            'payment_date',
+            'payment_mode',
+            'payment_type',
+            'status',
+            'description'
+          ],
+          where: { is_active: 1 },
+          required: false,
+          order: [['payment_date', 'DESC']]
+        }
+      ]
+    });
+    
+    return updatedBooking;
+  } catch (error) {
+    await transaction.rollback();
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
 module.exports = {
   getBooking,
   createBooking,
@@ -929,5 +1045,6 @@ module.exports = {
   updateDeliveryStatus,
   deleteBooking,
   getBookingById,
-  getBookingsByCustomer
+  getBookingsByCustomer,
+  addBookingPayment 
 };

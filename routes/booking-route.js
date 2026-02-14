@@ -164,6 +164,81 @@ const deliveryStatusSchema = {
     convert: true
   }
 };
+const paymentSchema = {
+  amount: {
+    type: "number",
+    optional: false,
+    positive: true,
+    min: 0.01,
+    messages: {
+      numberMin: "Amount must be greater than 0",
+      numberPositive: "Amount must be positive"
+    }
+  },
+  paymentMode: {
+    type: "enum",
+    values: ["cash", "card", "upi", "bank_transfer", "cheque", "wallet"],
+    optional: false,
+    messages: {
+      stringEmpty: "Payment mode is required"
+    }
+  },
+  paymentDate: {
+    type: "date",
+    optional: true,
+    convert: true
+  },
+  customerId: {
+    type: "string",
+    optional: true
+  },
+  description: {
+    type: "string",
+    optional: true,
+    max: 500
+  },
+  collectedBy: {
+    type: "string",
+    optional: true
+  },
+  collectedAtCenter: {
+    type: "string",
+    optional: true
+  }
+};
+
+async function addBookingPayment(req, res) {
+  const responseEntries = new ResponseEntry();
+  const v = new Validator();
+  
+  try {
+    if (!req.params.bookingId) {
+      throw new Error("Booking ID is required");
+    }
+    
+    const validationResponse = await v.validate(req.body, paymentSchema);
+    
+    if (validationResponse != true) {
+      const errorMessage = validationResponse.map(err => err.message).join(', ');
+      throw new Error(errorMessage);
+    }
+    
+    responseEntries.data = await bookingServices.addBookingPayment(
+      req.params.bookingId,
+      req.body
+    );
+    
+    responseEntries.message = "Payment added successfully";
+    
+  } catch (error) {
+    responseEntries.error = true;
+    responseEntries.message = error.message ? error.message : error;
+    responseEntries.code = error.code ? error.code : responseCode.BAD_REQUEST;
+    res.status(responseCode.BAD_REQUEST);
+  } finally {
+    res.send(responseEntries);
+  }
+}
 
 async function getBooking(req, res) {
   const responseEntries = new ResponseEntry();
@@ -365,6 +440,15 @@ async function deleteBooking(req, res) {
 }
 
 module.exports = async function (fastify) {
+
+  fastify.route({
+    method: "POST",
+    url: "/bookings/:bookingId/payments",
+    // preHandler: verifyToken,
+    handler: addBookingPayment,
+  });
+
+  
   fastify.route({
     method: "GET",
     url: "/bookings",
