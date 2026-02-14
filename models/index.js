@@ -53,6 +53,8 @@ db.Holiday = require("./holiday")(sequelize, Sequelize.DataTypes);
 db.StaffAttendance = require("./staff_attendance")(sequelize, Sequelize.DataTypes);
 db.ExpenceType = require("./expence-type")(sequelize, Sequelize.DataTypes);
 db.OpeningBalance = require("./opening-balance")(sequelize, Sequelize.DataTypes);
+db.Expence = require("./expense")(sequelize, Sequelize.DataTypes);
+db.ExpensePayment = require("./expense-payment")(sequelize, Sequelize.DataTypes);
 
 db.Customer = require("./customer")(sequelize, Sequelize.DataTypes); 
 db.OfficeCenter = require("./office-center")(sequelize, Sequelize.DataTypes); 
