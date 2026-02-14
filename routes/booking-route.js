@@ -485,7 +485,7 @@ module.exports = async function (fastify) {
   });
   
   fastify.route({
-    method: "PATCH",
+    method: "PUT",
     url: "/bookings/:bookingId/delivery-status",
     // preHandler: verifyToken,
     handler: updateDeliveryStatus,
