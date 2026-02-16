@@ -94,12 +94,12 @@ async function getExpenses(query, needIsActive = true) {
           where: needIsActive ? { is_active: 1 } : {},
           required: false
         },
-        {
-          model: Employee,
-          as: 'createdBy',
-          attributes: ['employee_id', 'employee_name', 'employee_number'],
-          required: false
-        }
+        // {
+        //   model: Employee,
+        //   as: 'createdBy',
+        //   attributes: ['employee_id', 'employee_name', 'employee_number'],
+        //   required: false
+        // }
       ],
       order: [['expense_date', 'DESC'], ['created_at', 'DESC']],
       limit: parsedLimit,
