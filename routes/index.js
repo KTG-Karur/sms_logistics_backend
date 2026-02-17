@@ -28,5 +28,6 @@ module.exports = function routesPlugin(fastify, opts, next) {
   fastify.register(require("./opening-balance-routes"));
   fastify.register(require("./expense-route"));
   fastify.register(require("./expense-payment-routes"));
+  fastify.register(require("./trip-route"));
   next();
 };

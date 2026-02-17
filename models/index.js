@@ -59,6 +59,9 @@ db.Location = require("./location")(sequelize, Sequelize.DataTypes);
 db.Booking = require("./booking")(sequelize, Sequelize.DataTypes);
 db.BookingPackage = require("./booking-package")(sequelize, Sequelize.DataTypes);
 db.Payment = require("./payment")(sequelize, Sequelize.DataTypes);
+db.Trip = require("./trip")(sequelize, Sequelize.DataTypes);
+db.TripBooking = require("./trip-booking")(sequelize, Sequelize.DataTypes);
+db.TripLoadman = require("./trip-loadman")(sequelize, Sequelize.DataTypes);
 
 db.Customer = require("./customer")(sequelize, Sequelize.DataTypes); 
 db.OfficeCenter = require("./office-center")(sequelize, Sequelize.DataTypes); 
