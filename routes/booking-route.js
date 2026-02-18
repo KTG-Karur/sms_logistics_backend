@@ -439,6 +439,229 @@ async function deleteBooking(req, res) {
   }
 }
 
+// =============================================
+// NEW ROUTE HANDLERS FOR CUSTOMER PAYMENTS
+// =============================================
+
+/**
+ * Get customer pending amount and payment history by date range
+ */
+async function getCustomerPaymentsByDate(req, res) {
+  const responseEntries = new ResponseEntry();
+  
+  try {
+    if (!req.params.customerId) {
+      throw new Error("Customer ID is required");
+    }
+    
+    const { startDate, endDate } = req.query;
+    
+    if (!startDate || !endDate) {
+      throw new Error("Start date and end date are required");
+    }
+    
+    responseEntries.data = await bookingServices.getCustomerPaymentsByDate(
+      req.params.customerId,
+      startDate,
+      endDate,
+      req.query.type || 'sender' // sender or receiver
+    );
+    
+    if (!responseEntries.data) {
+      responseEntries.message = messages.DATA_NOT_FOUND;
+    }
+  } catch (error) {
+    responseEntries.error = true;
+    responseEntries.message = error.message ? error.message : error;
+    responseEntries.code = error.code ? error.code : responseCode.BAD_REQUEST;
+    res.status(responseCode.BAD_REQUEST);
+  } finally {
+    res.send(responseEntries);
+  }
+}
+
+/**
+ * Get customer bookings and payment list
+ */
+async function getCustomerBookingsAndPayments(req, res) {
+  const responseEntries = new ResponseEntry();
+  
+  try {
+    if (!req.params.customerId) {
+      throw new Error("Customer ID is required");
+    }
+    
+    responseEntries.data = await bookingServices.getCustomerBookingsAndPayments(
+      req.params.customerId,
+      req.query.type || 'sender' // sender or receiver
+    );
+    
+    if (!responseEntries.data) {
+      responseEntries.message = messages.DATA_NOT_FOUND;
+    }
+  } catch (error) {
+    responseEntries.error = true;
+    responseEntries.message = error.message ? error.message : error;
+    responseEntries.code = error.code ? error.code : responseCode.BAD_REQUEST;
+    res.status(responseCode.BAD_REQUEST);
+  } finally {
+    res.send(responseEntries);
+  }
+}
+
+/**
+ * Make payment for all pending bookings of a customer
+ */
+async function makeCustomerBulkPayment(req, res) {
+  const responseEntries = new ResponseEntry();
+  const v = new Validator();
+  
+  const bulkPaymentSchema = {
+    amount: {
+      type: "number",
+      optional: false,
+      positive: true,
+      min: 0.01,
+      messages: {
+        numberMin: "Amount must be greater than 0",
+        numberPositive: "Amount must be positive"
+      }
+    },
+    paymentMode: {
+      type: "enum",
+      values: ["cash", "card", "upi", "bank_transfer", "cheque", "wallet"],
+      optional: false,
+      messages: {
+        stringEmpty: "Payment mode is required"
+      }
+    },
+    paymentDate: {
+      type: "date",
+      optional: true,
+      convert: true
+    },
+    bookingIds: {
+      type: "array",
+      optional: true,
+      items: "string"
+    },
+    description: {
+      type: "string",
+      optional: true,
+      max: 500
+    },
+    collectedBy: {
+      type: "string",
+      optional: true
+    },
+    collectedAtCenter: {
+      type: "string",
+      optional: true
+    }
+  };
+  
+  try {
+    if (!req.params.customerId) {
+      throw new Error("Customer ID is required");
+    }
+    
+    const validationResponse = await v.validate(req.body, bulkPaymentSchema);
+    
+    if (validationResponse != true) {
+      const errorMessage = validationResponse.map(err => err.message).join(', ');
+      throw new Error(errorMessage);
+    }
+    
+    responseEntries.data = await bookingServices.makeCustomerBulkPayment(
+      req.params.customerId,
+      req.body,
+      req.query.type || 'sender'
+    );
+    
+    responseEntries.message = "Bulk payment processed successfully";
+    
+  } catch (error) {
+    responseEntries.error = true;
+    responseEntries.message = error.message ? error.message : error;
+    responseEntries.code = error.code ? error.code : responseCode.BAD_REQUEST;
+    res.status(responseCode.BAD_REQUEST);
+  } finally {
+    res.send(responseEntries);
+  }
+}
+
+
+// =============================================
+// GET ALL CUSTOMER PAYMENT RECORDS
+// =============================================
+
+/**
+ * Get all customer payment records with paid and pending amounts
+ * Can filter by customer ID, date range, payment status
+ */
+async function getAllCustomerPaymentRecords(req, res) {
+  const responseEntries = new ResponseEntry();
+  
+  try {
+    const { 
+      customerId, 
+      startDate, 
+      endDate, 
+      paymentStatus,
+      page = 1, 
+      limit = 20 
+    } = req.query;
+    
+    const filters = {
+      customerId,
+      startDate,
+      endDate,
+      paymentStatus,
+      page: parseInt(page),
+      limit: parseInt(limit)
+    };
+    
+    responseEntries.data = await bookingServices.getAllCustomerPaymentRecords(filters);
+    
+    if (!responseEntries.data || responseEntries.data.records.length === 0) {
+      responseEntries.message = messages.DATA_NOT_FOUND;
+    }
+  } catch (error) {
+    responseEntries.error = true;
+    responseEntries.message = error.message ? error.message : error;
+    responseEntries.code = error.code ? error.code : responseCode.BAD_REQUEST;
+    res.status(responseCode.BAD_REQUEST);
+  } finally {
+    res.send(responseEntries);
+  }
+}
+
+/**
+ * Get customer payment summary (dashboard view)
+ */
+async function getCustomerPaymentSummary(req, res) {
+  const responseEntries = new ResponseEntry();
+  
+  try {
+    if (!req.params.customerId) {
+      throw new Error("Customer ID is required");
+    }
+    
+    responseEntries.data = await bookingServices.getCustomerPaymentSummary(
+      req.params.customerId,
+      req.query.type || 'sender'
+    );
+    
+  } catch (error) {
+    responseEntries.error = true;
+    responseEntries.message = error.message ? error.message : error;
+    responseEntries.code = error.code ? error.code : responseCode.BAD_REQUEST;
+    res.status(responseCode.BAD_REQUEST);
+  } finally {
+    res.send(responseEntries);
+  }
+}
+
 module.exports = async function (fastify) {
 
   fastify.route({
@@ -497,4 +720,41 @@ module.exports = async function (fastify) {
     // preHandler: verifyToken,
     handler: deleteBooking,
   });
+
+  // NEW ROUTES FOR CUSTOMER PAYMENTS
+  fastify.route({
+    method: "GET",
+    url: "/customers/:customerId/payments/by-date",
+    // preHandler: verifyToken,
+    handler: getCustomerPaymentsByDate,
+  });
+  
+  fastify.route({
+    method: "GET",
+    url: "/customers/:customerId/bookings-payments",
+    // preHandler: verifyToken,
+    handler: getCustomerBookingsAndPayments,
+  });
+  
+  fastify.route({
+    method: "POST",
+    url: "/customers/:customerId/bulk-payment",
+    // preHandler: verifyToken,
+    handler: makeCustomerBulkPayment,
+  });
+
+   fastify.route({
+    method: "GET",
+    url: "/customer-payments/records",
+    // preHandler: verifyToken,
+    handler: getAllCustomerPaymentRecords,
+  });
+  
+  fastify.route({
+    method: "GET",
+    url: "/customers/:customerId/payment-summary",
+    // preHandler: verifyToken,
+    handler: getCustomerPaymentSummary,
+  });
+
 };
