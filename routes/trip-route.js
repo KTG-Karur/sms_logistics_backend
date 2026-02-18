@@ -389,6 +389,67 @@ async function deleteTrip(req, res) {
   }
 }
 
+// =============================================
+// UPDATE TRIP BOOKINGS (ADD/REMOVE)
+// =============================================
+
+const updateTripBookingsSchema = {
+  addBookingIds: {
+    type: "array",
+    optional: true,
+    items: "string",
+    messages: {
+      array: "Add booking IDs must be an array of strings"
+    }
+  },
+  removeBookingIds: {
+    type: "array",
+    optional: true,
+    items: "string",
+    messages: {
+      array: "Remove booking IDs must be an array of strings"
+    }
+  }
+};
+
+async function updateTripBookings(req, res) {
+  const responseEntries = new ResponseEntry();
+  const v = new Validator();
+  
+  try {
+    if (!req.params.tripId) {
+      throw new Error("Trip ID is required");
+    }
+    
+    // Validate that at least one operation is provided
+    if (!req.body.addBookingIds && !req.body.removeBookingIds) {
+      throw new Error("Either addBookingIds or removeBookingIds must be provided");
+    }
+    
+    const validationResponse = await v.validate(req.body, updateTripBookingsSchema);
+    
+    if (validationResponse != true) {
+      const errorMessage = validationResponse.map(err => err.message).join(', ');
+      throw new Error(errorMessage);
+    }
+    
+    responseEntries.data = await tripServices.updateTripBookings(
+      req.params.tripId,
+      req.body
+    );
+    
+    responseEntries.message = "Trip bookings updated successfully";
+    
+  } catch (error) {
+    responseEntries.error = true;
+    responseEntries.message = error.message ? error.message : error;
+    responseEntries.code = error.code ? error.code : responseCode.BAD_REQUEST;
+    res.status(responseCode.BAD_REQUEST);
+  } finally {
+    res.send(responseEntries);
+  }
+}
+
 module.exports = async function (fastify) {
   // Get endpoints
   fastify.route({
@@ -450,7 +511,7 @@ module.exports = async function (fastify) {
   });
   
   fastify.route({
-    method: "PATCH",
+    method: "PUT",
     url: "/trips/:tripId/status",
     // preHandler: verifyToken,
     handler: updateTripStatus,
@@ -462,5 +523,12 @@ module.exports = async function (fastify) {
     url: "/trips/:tripId",
     // preHandler: verifyToken,
     handler: deleteTrip,
+  });
+
+   fastify.route({
+    method: "PUT",
+    url: "/trips/:tripId/bookings",
+    // preHandler: verifyToken,
+    handler: updateTripBookings,
   });
 };
