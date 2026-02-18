@@ -1749,6 +1749,269 @@ async function getCustomerPaymentSummary(customerId, type = 'sender') {
   }
 }
 
+
+// =============================================
+// ALL CUSTOMERS PAYMENT SUMMARY SERVICE
+// =============================================
+
+/**
+ * Get all customers payment summary with paid/pending status
+ */
+async function getAllCustomersPaymentSummary(filters = {}) {
+  try {
+    const {
+      search,
+      status, // 'all', 'paid', 'pending', 'partial'
+      sortBy = 'customer_name',
+      sortOrder = 'ASC',
+      page = 1,
+      limit = 20
+    } = filters;
+    
+    const offset = (page - 1) * limit;
+    
+    // Build customer where clause
+    const customerWhereClause = { is_active: 1 };
+    
+    if (search) {
+      customerWhereClause[Op.or] = [
+        { customer_name: { [Op.like]: `%${search}%` } },
+        { customer_number: { [Op.like]: `%${search}%` } }
+      ];
+    }
+    
+    // Get all customers with pagination
+    const { count: totalCustomers, rows: customers } = await Customer.findAndCountAll({
+      where: customerWhereClause,
+      attributes: [
+        'customer_id',
+        'customer_name',
+        'customer_number',
+        'is_active',
+        'created_at'
+      ],
+      order: [[sortBy, sortOrder]],
+      limit,
+      offset,
+      distinct: true
+    });
+    
+    // Get all bookings for these customers
+    const customerIds = customers.map(c => c.customer_id);
+    
+    // Get bookings where customer is sender
+    const senderBookings = await Booking.findAll({
+      where: {
+        from_customer_id: { [Op.in]: customerIds },
+        is_active: 1
+      },
+      attributes: [
+        'from_customer_id',
+        'booking_id',
+        'total_amount',
+        'paid_amount',
+        'due_amount',
+        'payment_status',
+        'delivery_status'
+      ]
+    });
+    
+    // Get bookings where customer is receiver
+    const receiverBookings = await Booking.findAll({
+      where: {
+        to_customer_id: { [Op.in]: customerIds },
+        is_active: 1
+      },
+      attributes: [
+        'to_customer_id',
+        'booking_id',
+        'total_amount',
+        'paid_amount',
+        'due_amount',
+        'payment_status',
+        'delivery_status'
+      ]
+    });
+    
+    // Get all payments for these customers
+    const payments = await Payment.findAll({
+      where: {
+        customer_id: { [Op.in]: customerIds },
+        is_active: 1
+      },
+      attributes: [
+        'customer_id',
+        'payment_id',
+        'amount',
+        'payment_date',
+        'status'
+      ]
+    });
+    
+    // Group bookings by customer
+    const customerBookings = {};
+    
+    // Process sender bookings
+    senderBookings.forEach(booking => {
+      const custId = booking.from_customer_id;
+      if (!customerBookings[custId]) {
+        customerBookings[custId] = {
+          as_sender: { total: 0, paid: 0, pending: 0, count: 0, bookings: [] },
+          as_receiver: { total: 0, paid: 0, pending: 0, count: 0, bookings: [] }
+        };
+      }
+      
+      customerBookings[custId].as_sender.total += parseFloat(booking.total_amount || 0);
+      customerBookings[custId].as_sender.paid += parseFloat(booking.paid_amount || 0);
+      customerBookings[custId].as_sender.pending += parseFloat(booking.due_amount || 0);
+      customerBookings[custId].as_sender.count += 1;
+      customerBookings[custId].as_sender.bookings.push(booking);
+    });
+    
+    // Process receiver bookings
+    receiverBookings.forEach(booking => {
+      const custId = booking.to_customer_id;
+      if (!customerBookings[custId]) {
+        customerBookings[custId] = {
+          as_sender: { total: 0, paid: 0, pending: 0, count: 0, bookings: [] },
+          as_receiver: { total: 0, paid: 0, pending: 0, count: 0, bookings: [] }
+        };
+      }
+      
+      customerBookings[custId].as_receiver.total += parseFloat(booking.total_amount || 0);
+      customerBookings[custId].as_receiver.paid += parseFloat(booking.paid_amount || 0);
+      customerBookings[custId].as_receiver.pending += parseFloat(booking.due_amount || 0);
+      customerBookings[custId].as_receiver.count += 1;
+      customerBookings[custId].as_receiver.bookings.push(booking);
+    });
+    
+    // Group payments by customer
+    const customerPayments = {};
+    
+    payments.forEach(payment => {
+      const custId = payment.customer_id;
+      if (!customerPayments[custId]) {
+        customerPayments[custId] = {
+          total: 0,
+          count: 0,
+          last_payment_date: null
+        };
+      }
+      
+      customerPayments[custId].total += parseFloat(payment.amount || 0);
+      customerPayments[custId].count += 1;
+      
+      const paymentDate = payment.payment_date;
+      if (!customerPayments[custId].last_payment_date || paymentDate > customerPayments[custId].last_payment_date) {
+        customerPayments[custId].last_payment_date = paymentDate;
+      }
+    });
+    
+    // Build customer summary
+    const customerSummaries = customers.map(customer => {
+      const custId = customer.customer_id;
+      const bookingData = customerBookings[custId] || { 
+        as_sender: { total: 0, paid: 0, pending: 0, count: 0 }, 
+        as_receiver: { total: 0, paid: 0, pending: 0, count: 0 } 
+      };
+      const paymentData = customerPayments[custId] || { total: 0, count: 0, last_payment_date: null };
+      
+      // Calculate overall totals
+      const totalBookings = bookingData.as_sender.count + bookingData.as_receiver.count;
+      const totalAmount = bookingData.as_sender.total + bookingData.as_receiver.total;
+      const totalPaid = bookingData.as_sender.paid + bookingData.as_receiver.paid;
+      const totalPending = bookingData.as_sender.pending + bookingData.as_receiver.pending;
+      
+      // Determine payment status
+      let paymentStatus = 'no_bookings';
+      if (totalBookings > 0) {
+        if (totalPending <= 0) {
+          paymentStatus = 'fully_paid';
+        } else if (totalPaid > 0 && totalPending > 0) {
+          paymentStatus = 'partial';
+        } else if (totalPaid <= 0 && totalPending > 0) {
+          paymentStatus = 'pending';
+        }
+      }
+      
+      // Calculate payment progress
+      const paymentProgress = totalAmount > 0 ? ((totalPaid / totalAmount) * 100).toFixed(2) : 0;
+      
+      return {
+        customer_id: custId,
+        customer_name: customer.customer_name,
+        customer_number: customer.customer_number,
+        created_at: customer.created_at,
+        summary: {
+          total_bookings: totalBookings,
+          total_amount: totalAmount.toFixed(2),
+          total_paid: totalPaid.toFixed(2),
+          total_pending: totalPending.toFixed(2),
+          payment_progress: paymentProgress,
+          payment_status: paymentStatus,
+          as_sender: {
+            bookings: bookingData.as_sender.count,
+            total: bookingData.as_sender.total.toFixed(2),
+            paid: bookingData.as_sender.paid.toFixed(2),
+            pending: bookingData.as_sender.pending.toFixed(2)
+          },
+          as_receiver: {
+            bookings: bookingData.as_receiver.count,
+            total: bookingData.as_receiver.total.toFixed(2),
+            paid: bookingData.as_receiver.paid.toFixed(2),
+            pending: bookingData.as_receiver.pending.toFixed(2)
+          },
+          payments: {
+            total_count: paymentData.count,
+            total_amount: paymentData.total.toFixed(2),
+            last_payment_date: paymentData.last_payment_date
+          }
+        }
+      };
+    });
+    
+    // Filter by payment status if requested
+    let filteredSummaries = customerSummaries;
+    if (status && status !== 'all') {
+      filteredSummaries = customerSummaries.filter(c => c.summary.payment_status === status);
+    }
+    
+    // Calculate overall statistics
+    const overallStats = {
+      total_customers: filteredSummaries.length,
+      total_bookings: filteredSummaries.reduce((sum, c) => sum + c.summary.total_bookings, 0),
+      total_amount: filteredSummaries.reduce((sum, c) => sum + parseFloat(c.summary.total_amount), 0).toFixed(2),
+      total_paid: filteredSummaries.reduce((sum, c) => sum + parseFloat(c.summary.total_paid), 0).toFixed(2),
+      total_pending: filteredSummaries.reduce((sum, c) => sum + parseFloat(c.summary.total_pending), 0).toFixed(2),
+      total_payments: filteredSummaries.reduce((sum, c) => sum + c.summary.payments.total_count, 0),
+      total_payment_amount: filteredSummaries.reduce((sum, c) => sum + parseFloat(c.summary.payments.total_amount), 0).toFixed(2)
+    };
+    
+    // Status breakdown
+    const statusBreakdown = {
+      fully_paid: customerSummaries.filter(c => c.summary.payment_status === 'fully_paid').length,
+      partial: customerSummaries.filter(c => c.summary.payment_status === 'partial').length,
+      pending: customerSummaries.filter(c => c.summary.payment_status === 'pending').length,
+      no_bookings: customerSummaries.filter(c => c.summary.payment_status === 'no_bookings').length
+    };
+    
+    return {
+      overall: overallStats,
+      status_breakdown: statusBreakdown,
+      pagination: {
+        current_page: page,
+        total_pages: Math.ceil(filteredSummaries.length / limit),
+        total_customers: filteredSummaries.length,
+        limit,
+        offset
+      },
+      customers: filteredSummaries.slice(offset, offset + limit)
+    };
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
 module.exports = {
   getBooking,
   createBooking,
@@ -1763,5 +2026,6 @@ module.exports = {
   getCustomerBookingsAndPayments,
   makeCustomerBulkPayment,
   getAllCustomerPaymentRecords,
-  getCustomerPaymentSummary
+  getCustomerPaymentSummary,
+  getAllCustomersPaymentSummary
 };
