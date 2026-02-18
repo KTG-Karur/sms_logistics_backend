@@ -575,7 +575,7 @@ async function makeCustomerBulkPayment(req, res) {
     responseEntries.data = await bookingServices.makeCustomerBulkPayment(
       req.params.customerId,
       req.body,
-      req.query.type || 'sender'
+      req.query.type 
     );
     
     responseEntries.message = "Bulk payment processed successfully";

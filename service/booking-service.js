@@ -1386,22 +1386,32 @@ async function getCustomerBookingsAndPayments(customerId, type = null) {
   }
 }
 /**
- * Make payment for all pending bookings of a customer
+ * Make bulk payment for a customer - customer can pay for any bookings they are responsible for
+ * Based on payment_by logic:
+ * - If payment_by = 'sender', customer must be the from_customer_id to pay
+ * - If payment_by = 'receiver', customer must be the to_customer_id to pay
  */
-async function makeCustomerBulkPayment(customerId, paymentData, type = 'sender') {
+async function makeCustomerBulkPayment(customerId, paymentData) {
   const transaction = await sequelize.transaction();
   
   try {
-    // Build where clause based on customer type
-    const customerWhereClause = type === 'sender' 
-      ? { from_customer_id: customerId }
-      : { to_customer_id: customerId };
-    
-    // Find all pending bookings for this customer
+    // Find all pending bookings where this customer is responsible for payment
+    // based on payment_by logic
     const whereClause = {
-      ...customerWhereClause,
       is_active: 1,
-      due_amount: { [Op.gt]: 0 }
+      due_amount: { [Op.gt]: 0 },
+      [Op.or]: [
+        // Customer is sender AND payment_by is 'sender' - customer pays
+        { 
+          from_customer_id: customerId, 
+          payment_by: 'sender' 
+        },
+        // Customer is receiver AND payment_by is 'receiver' - customer pays
+        { 
+          to_customer_id: customerId, 
+          payment_by: 'receiver' 
+        }
+      ]
     };
     
     // If specific booking IDs are provided, filter by them
@@ -1411,13 +1421,22 @@ async function makeCustomerBulkPayment(customerId, paymentData, type = 'sender')
     
     const pendingBookings = await Booking.findAll({
       where: whereClause,
-      attributes: ['booking_id', 'booking_number', 'total_amount', 'paid_amount', 'due_amount'],
+      attributes: [
+        'booking_id', 
+        'booking_number', 
+        'total_amount', 
+        'paid_amount', 
+        'due_amount',
+        'payment_by',
+        'from_customer_id',
+        'to_customer_id'
+      ],
       order: [['booking_date', 'ASC']],
       transaction
     });
     
     if (pendingBookings.length === 0) {
-      throw new Error("No pending bookings found for this customer");
+      throw new Error("No pending bookings found where this customer is responsible for payment");
     }
     
     const totalPendingAmount = pendingBookings.reduce((sum, b) => sum + parseFloat(b.due_amount || 0), 0);
@@ -1442,6 +1461,10 @@ async function makeCustomerBulkPayment(customerId, paymentData, type = 'sender')
       
       const bookingDue = parseFloat(booking.due_amount);
       let amountForThisBooking = Math.min(remainingAmount, bookingDue);
+      
+      // Determine if customer is sender or receiver for this booking
+      const isSender = booking.from_customer_id === customerId;
+      const isReceiver = booking.to_customer_id === customerId;
       
       // Update booking
       const newPaidAmount = parseFloat(booking.paid_amount) + amountForThisBooking;
@@ -1469,7 +1492,7 @@ async function makeCustomerBulkPayment(customerId, paymentData, type = 'sender')
         payment_date: paymentData.paymentDate || new Date().toISOString().split('T')[0],
         payment_mode: paymentData.paymentMode,
         payment_type: amountForThisBooking >= bookingDue ? 'full' : 'partial',
-        description: paymentData.description || `Bulk payment for booking ${booking.booking_number}`,
+        description: paymentData.description || `Payment for booking ${booking.booking_number}`,
         collected_by: paymentData.collectedBy || null,
         collected_at_center: paymentData.collectedAtCenter || null,
         status: 'completed',
@@ -1483,7 +1506,9 @@ async function makeCustomerBulkPayment(customerId, paymentData, type = 'sender')
         booking_number: booking.booking_number,
         amount_paid: amountForThisBooking,
         previous_due: bookingDue,
-        new_due: newDueAmount
+        new_due: newDueAmount,
+        payment_by: booking.payment_by,
+        role: isSender ? 'sender' : 'receiver'
       });
       
       createdPayments.push(payment);
@@ -1493,14 +1518,6 @@ async function makeCustomerBulkPayment(customerId, paymentData, type = 'sender')
     
     await transaction.commit();
     
-    // Create a consolidated payment record for the bulk transaction (optional)
-    const bulkPaymentSummary = {
-      bulk_payment_id: uuidv4(),
-      total_amount: paymentAmount,
-      applied_to_bookings: updatedBookings.length,
-      remaining_amount: remainingAmount
-    };
-    
     return {
       success: true,
       message: `Successfully processed payment of ${paymentAmount} for ${updatedBookings.length} bookings`,
@@ -1508,7 +1525,9 @@ async function makeCustomerBulkPayment(customerId, paymentData, type = 'sender')
         customer_id: customerId,
         total_paid: paymentAmount,
         bookings_updated: updatedBookings.length,
-        remaining_pending: remainingAmount
+        remaining_pending: remainingAmount,
+        total_pending_before: totalPendingAmount,
+        total_pending_after: totalPendingAmount - paymentAmount
       },
       updated_bookings: updatedBookings,
       payments: createdPayments.map(p => ({
