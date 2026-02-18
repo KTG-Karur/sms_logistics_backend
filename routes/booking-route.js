@@ -493,7 +493,7 @@ async function getCustomerBookingsAndPayments(req, res) {
     
     responseEntries.data = await bookingServices.getCustomerBookingsAndPayments(
       req.params.customerId,
-      req.query.type || 'sender' // sender or receiver
+      req.query.type  // sender or receiver
     );
     
     if (!responseEntries.data) {

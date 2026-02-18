@@ -1157,7 +1157,7 @@ async function getCustomerPaymentsByDate(customerId, startDate, endDate, type = 
 /**
  * Get customer bookings and payment list
  */
-async function getCustomerBookingsAndPayments(customerId, type = 'sender') {
+async function getCustomerBookingsAndPayments1(customerId, type = 'sender') {
   try {
     // Build where clause based on customer type
     const customerWhereClause = type === 'sender' 
@@ -1293,6 +1293,236 @@ async function getCustomerBookingsAndPayments(customerId, type = 'sender') {
   }
 }
 
+
+/**
+ * Get customer bookings and payment list with proper payment_by logic
+ * If customer is sender (payment_by = 'sender'), show bookings where from_customer_id matches
+ * If customer is receiver (payment_by = 'receiver'), show bookings where to_customer_id matches
+ * If type not specified, show both (as sender and as receiver)
+ */
+async function getCustomerBookingsAndPayments(customerId, type = null) {
+  try {
+    // Build where clause based on customer type and payment_by logic
+    let bookingWhereClause = { is_active: 1 };
+    
+    if (type === 'sender') {
+      // Customer as sender - only show bookings where they are sender AND payment_by is sender
+      bookingWhereClause = {
+        ...bookingWhereClause,
+        from_customer_id: customerId,
+        payment_by: 'sender'
+      };
+    } else if (type === 'receiver') {
+      // Customer as receiver - only show bookings where they are receiver AND payment_by is receiver
+      bookingWhereClause = {
+        ...bookingWhereClause,
+        to_customer_id: customerId,
+        payment_by: 'receiver'
+      };
+    } else {
+      // No type specified - show both scenarios
+      bookingWhereClause = {
+        ...bookingWhereClause,
+        [Op.or]: [
+          { 
+            from_customer_id: customerId,
+            payment_by: 'sender'
+          },
+          { 
+            to_customer_id: customerId,
+            payment_by: 'receiver'
+          }
+        ]
+      };
+    }
+    
+    // Get all bookings for this customer based on payment_by logic
+    const bookings = await Booking.findAll({
+      where: bookingWhereClause,
+      attributes: [
+        'booking_id',
+        'booking_number',
+        'llr_number',
+        'booking_date',
+        'from_center_id',
+        'to_center_id',
+        'from_customer_id',
+        'to_customer_id',
+        'total_amount',
+        'paid_amount',
+        'due_amount',
+        'payment_by',
+        'payment_status',
+        'delivery_status',
+        'actual_delivery_date'
+      ],
+      include: [
+        {
+          model: OfficeCenter,
+          as: 'fromCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        },
+        {
+          model: OfficeCenter,
+          as: 'toCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        },
+        {
+          model: Customer,
+          as: 'fromCustomer',
+          attributes: ['customer_id', 'customer_name', 'customer_number']
+        },
+        {
+          model: Customer,
+          as: 'toCustomer',
+          attributes: ['customer_id', 'customer_name', 'customer_number']
+        },
+        {
+          model: BookingPackage,
+          as: 'packages',
+          attributes: [
+            'booking_package_id',
+            'package_type_id',
+            'quantity',
+            'pickup_charge',
+            'drop_charge',
+            'handling_charge',
+            'total_package_charge'
+          ],
+          include: [
+            {
+              model: PackageType,
+              as: 'packageType',
+              attributes: ['package_type_id', 'package_type_name']
+            }
+          ]
+        },
+        {
+          model: Payment,
+          as: 'payments',
+          attributes: [
+            'payment_id',
+            'payment_number',
+            'amount',
+            'payment_date',
+            'payment_mode',
+            'payment_type',
+            'status',
+            'description'
+          ],
+          where: { is_active: 1 },
+          required: false,
+          order: [['payment_date', 'DESC']]
+        }
+      ],
+      order: [['booking_date', 'DESC']]
+    });
+
+    // Get all payments for this customer (regardless of booking type)
+    const payments = await Payment.findAll({
+      where: {
+        customer_id: customerId,
+        is_active: 1
+      },
+      attributes: [
+        'payment_id',
+        'payment_number',
+        'amount',
+        'payment_date',
+        'payment_mode',
+        'payment_type',
+        'status',
+        'description',
+        'created_at'
+      ],
+      include: [
+        {
+          model: Booking,
+          as: 'booking',
+          attributes: [
+            'booking_id', 
+            'booking_number', 
+            'booking_date', 
+            'total_amount', 
+            'due_amount',
+            'payment_by',
+            'from_customer_id',
+            'to_customer_id'
+          ]
+        }
+      ],
+      order: [['payment_date', 'DESC']]
+    });
+
+    // Separate bookings by role (as sender vs as receiver)
+    const asSenderBookings = bookings.filter(b => 
+      b.from_customer_id === customerId && b.payment_by === 'sender'
+    );
+    
+    const asReceiverBookings = bookings.filter(b => 
+      b.to_customer_id === customerId && b.payment_by === 'receiver'
+    );
+
+    // Calculate summary statistics
+    const totalBookings = bookings.length;
+    const completedBookings = bookings.filter(b => b.delivery_status === 'delivered').length;
+    const pendingBookings = bookings.filter(b => b.delivery_status !== 'delivered').length;
+    
+    // Calculate financial totals
+    const totalAmount = bookings.reduce((sum, b) => sum + parseFloat(b.total_amount || 0), 0);
+    const totalPaid = bookings.reduce((sum, b) => sum + parseFloat(b.paid_amount || 0), 0);
+    const totalPending = bookings.reduce((sum, b) => sum + parseFloat(b.due_amount || 0), 0);
+    
+    // Calculate as sender totals
+    const asSenderTotal = asSenderBookings.reduce((sum, b) => sum + parseFloat(b.total_amount || 0), 0);
+    const asSenderPaid = asSenderBookings.reduce((sum, b) => sum + parseFloat(b.paid_amount || 0), 0);
+    const asSenderPending = asSenderBookings.reduce((sum, b) => sum + parseFloat(b.due_amount || 0), 0);
+    
+    // Calculate as receiver totals
+    const asReceiverTotal = asReceiverBookings.reduce((sum, b) => sum + parseFloat(b.total_amount || 0), 0);
+    const asReceiverPaid = asReceiverBookings.reduce((sum, b) => sum + parseFloat(b.paid_amount || 0), 0);
+    const asReceiverPending = asReceiverBookings.reduce((sum, b) => sum + parseFloat(b.due_amount || 0), 0);
+
+    // Calculate payment totals
+    const totalPayments = payments.length;
+    const totalPaymentAmount = payments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+
+    return {
+      customer_id: customerId,
+      requested_type: type || 'all', // 'sender', 'receiver', or 'all'
+      summary: {
+        total_bookings: totalBookings,
+        completed_bookings: completedBookings,
+        pending_bookings: pendingBookings,
+        total_amount: totalAmount.toFixed(2),
+        total_paid: totalPaid.toFixed(2),
+        total_pending: totalPending.toFixed(2),
+        payment_progress: totalAmount > 0 ? ((totalPaid / totalAmount) * 100).toFixed(2) : 0,
+        total_payments: totalPayments,
+        total_payment_amount: totalPaymentAmount.toFixed(2),
+        as_sender: {
+          bookings_count: asSenderBookings.length,
+          total_amount: asSenderTotal.toFixed(2),
+          paid_amount: asSenderPaid.toFixed(2),
+          pending_amount: asSenderPending.toFixed(2)
+        },
+        as_receiver: {
+          bookings_count: asReceiverBookings.length,
+          total_amount: asReceiverTotal.toFixed(2),
+          paid_amount: asReceiverPaid.toFixed(2),
+          pending_amount: asReceiverPending.toFixed(2)
+        }
+      },
+      bookings: bookings,
+      payments: payments,
+      // Add separated lists for clarity
+      as_sender_bookings: asSenderBookings,
+      as_receiver_bookings: asReceiverBookings
+    };
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
 /**
  * Make payment for all pending bookings of a customer
  */
