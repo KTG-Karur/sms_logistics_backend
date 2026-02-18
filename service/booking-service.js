@@ -1038,6 +1038,717 @@ async function addBookingPayment(bookingId, paymentData) {
   }
 }
 
+// =============================================
+// NEW SERVICE FUNCTIONS FOR CUSTOMER PAYMENTS
+// =============================================
+
+/**
+ * Get customer pending amount and payment history by date range
+ */
+async function getCustomerPaymentsByDate(customerId, startDate, endDate, type = 'sender') {
+  try {
+    // Build where clause based on customer type (sender or receiver)
+    const customerWhereClause = type === 'sender' 
+      ? { from_customer_id: customerId }
+      : { to_customer_id: customerId };
+    
+    // Get all bookings for this customer
+    const bookings = await Booking.findAll({
+      where: {
+        ...customerWhereClause,
+        is_active: 1,
+        booking_date: {
+          [Op.between]: [startDate, endDate]
+        }
+      },
+      attributes: [
+        'booking_id',
+        'booking_number',
+        'booking_date',
+        'total_amount',
+        'paid_amount',
+        'due_amount',
+        'payment_status',
+        'delivery_status'
+      ],
+      include: [
+        {
+          model: Payment,
+          as: 'payments',
+          attributes: [
+            'payment_id',
+            'payment_number',
+            'amount',
+            'payment_date',
+            'payment_mode',
+            'payment_type',
+            'status'
+          ],
+          where: { is_active: 1 },
+          required: false,
+          order: [['payment_date', 'DESC']]
+        },
+        {
+          model: Customer,
+          as: type === 'sender' ? 'fromCustomer' : 'toCustomer',
+          attributes: ['customer_id', 'customer_name', 'customer_number']
+        }
+      ],
+      order: [['booking_date', 'DESC']]
+    });
+
+    // Calculate totals
+    const totalPending = bookings.reduce((sum, booking) => sum + parseFloat(booking.due_amount || 0), 0);
+    const totalPaid = bookings.reduce((sum, booking) => sum + parseFloat(booking.paid_amount || 0), 0);
+    const totalAmount = bookings.reduce((sum, booking) => sum + parseFloat(booking.total_amount || 0), 0);
+
+    // Get all payments for this customer in date range
+    const payments = await Payment.findAll({
+      where: {
+        customer_id: customerId,
+        payment_date: {
+          [Op.between]: [startDate, endDate]
+        },
+        is_active: 1
+      },
+      attributes: [
+        'payment_id',
+        'payment_number',
+        'amount',
+        'payment_date',
+        'payment_mode',
+        'payment_type',
+        'status',
+        'description'
+      ],
+      include: [
+        {
+          model: Booking,
+          as: 'booking',
+          attributes: ['booking_id', 'booking_number', 'booking_date']
+        }
+      ],
+      order: [['payment_date', 'DESC']]
+    });
+
+    return {
+      customer_id: customerId,
+      customer_type: type,
+      date_range: {
+        start_date: startDate,
+        end_date: endDate
+      },
+      summary: {
+        total_bookings: bookings.length,
+        total_amount: totalAmount.toFixed(2),
+        total_paid: totalPaid.toFixed(2),
+        total_pending: totalPending.toFixed(2),
+        total_payments: payments.length,
+        total_payment_amount: payments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0).toFixed(2)
+      },
+      bookings: bookings,
+      payments: payments
+    };
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
+/**
+ * Get customer bookings and payment list
+ */
+async function getCustomerBookingsAndPayments(customerId, type = 'sender') {
+  try {
+    // Build where clause based on customer type
+    const customerWhereClause = type === 'sender' 
+      ? { from_customer_id: customerId }
+      : { to_customer_id: customerId };
+    
+    // Get all bookings for this customer
+    const bookings = await Booking.findAll({
+      where: {
+        ...customerWhereClause,
+        is_active: 1
+      },
+      attributes: [
+        'booking_id',
+        'booking_number',
+        'llr_number',
+        'booking_date',
+        'from_center_id',
+        'to_center_id',
+        'total_amount',
+        'paid_amount',
+        'due_amount',
+        'payment_by',
+        'payment_status',
+        'delivery_status',
+        'actual_delivery_date'
+      ],
+      include: [
+        {
+          model: OfficeCenter,
+          as: 'fromCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        },
+        {
+          model: OfficeCenter,
+          as: 'toCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        },
+        {
+          model: BookingPackage,
+          as: 'packages',
+          attributes: [
+            'booking_package_id',
+            'package_type_id',
+            'quantity',
+            'pickup_charge',
+            'drop_charge',
+            'handling_charge',
+            'total_package_charge'
+          ],
+          include: [
+            {
+              model: PackageType,
+              as: 'packageType',
+              attributes: ['package_type_id', 'package_type_name']
+            }
+          ]
+        },
+        {
+          model: Payment,
+          as: 'payments',
+          attributes: [
+            'payment_id',
+            'payment_number',
+            'amount',
+            'payment_date',
+            'payment_mode',
+            'payment_type',
+            'status',
+            'description'
+          ],
+          where: { is_active: 1 },
+          required: false,
+          order: [['payment_date', 'DESC']]
+        }
+      ],
+      order: [['booking_date', 'DESC']]
+    });
+
+    // Get all payments for this customer
+    const payments = await Payment.findAll({
+      where: {
+        customer_id: customerId,
+        is_active: 1
+      },
+      attributes: [
+        'payment_id',
+        'payment_number',
+        'amount',
+        'payment_date',
+        'payment_mode',
+        'payment_type',
+        'status',
+        'description',
+        'created_at'
+      ],
+      include: [
+        {
+          model: Booking,
+          as: 'booking',
+          attributes: ['booking_id', 'booking_number', 'booking_date', 'total_amount', 'due_amount']
+        }
+      ],
+      order: [['payment_date', 'DESC']]
+    });
+
+    // Calculate summary statistics
+    const totalBookings = bookings.length;
+    const completedBookings = bookings.filter(b => b.delivery_status === 'delivered').length;
+    const pendingBookings = bookings.filter(b => b.delivery_status !== 'delivered').length;
+    
+    const totalAmount = bookings.reduce((sum, b) => sum + parseFloat(b.total_amount || 0), 0);
+    const totalPaid = bookings.reduce((sum, b) => sum + parseFloat(b.paid_amount || 0), 0);
+    const totalPending = bookings.reduce((sum, b) => sum + parseFloat(b.due_amount || 0), 0);
+
+    return {
+      customer_id: customerId,
+      customer_type: type,
+      summary: {
+        total_bookings: totalBookings,
+        completed_bookings: completedBookings,
+        pending_bookings: pendingBookings,
+        total_amount: totalAmount.toFixed(2),
+        total_paid: totalPaid.toFixed(2),
+        total_pending: totalPending.toFixed(2),
+        total_payments: payments.length
+      },
+      bookings: bookings,
+      payments: payments
+    };
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
+/**
+ * Make payment for all pending bookings of a customer
+ */
+async function makeCustomerBulkPayment(customerId, paymentData, type = 'sender') {
+  const transaction = await sequelize.transaction();
+  
+  try {
+    // Build where clause based on customer type
+    const customerWhereClause = type === 'sender' 
+      ? { from_customer_id: customerId }
+      : { to_customer_id: customerId };
+    
+    // Find all pending bookings for this customer
+    const whereClause = {
+      ...customerWhereClause,
+      is_active: 1,
+      due_amount: { [Op.gt]: 0 }
+    };
+    
+    // If specific booking IDs are provided, filter by them
+    if (paymentData.bookingIds && paymentData.bookingIds.length > 0) {
+      whereClause.booking_id = { [Op.in]: paymentData.bookingIds };
+    }
+    
+    const pendingBookings = await Booking.findAll({
+      where: whereClause,
+      attributes: ['booking_id', 'booking_number', 'total_amount', 'paid_amount', 'due_amount'],
+      order: [['booking_date', 'ASC']],
+      transaction
+    });
+    
+    if (pendingBookings.length === 0) {
+      throw new Error("No pending bookings found for this customer");
+    }
+    
+    const totalPendingAmount = pendingBookings.reduce((sum, b) => sum + parseFloat(b.due_amount || 0), 0);
+    const paymentAmount = parseFloat(paymentData.amount);
+    
+    // Validate payment amount
+    if (paymentAmount <= 0) {
+      throw new Error("Payment amount must be greater than 0");
+    }
+    
+    if (paymentAmount > totalPendingAmount) {
+      throw new Error(`Payment amount (${paymentAmount}) exceeds total pending amount (${totalPendingAmount})`);
+    }
+    
+    // Distribute payment across bookings
+    let remainingAmount = paymentAmount;
+    const updatedBookings = [];
+    const createdPayments = [];
+    
+    for (const booking of pendingBookings) {
+      if (remainingAmount <= 0) break;
+      
+      const bookingDue = parseFloat(booking.due_amount);
+      let amountForThisBooking = Math.min(remainingAmount, bookingDue);
+      
+      // Update booking
+      const newPaidAmount = parseFloat(booking.paid_amount) + amountForThisBooking;
+      const newDueAmount = parseFloat(booking.total_amount) - newPaidAmount;
+      
+      await Booking.update(
+        {
+          paid_amount: newPaidAmount,
+          due_amount: newDueAmount,
+          payment_status: newDueAmount <= 0 ? 'completed' : 'partial'
+        },
+        {
+          where: { booking_id: booking.booking_id },
+          transaction
+        }
+      );
+      
+      // Create payment record for this booking
+      const paymentRecord = {
+        payment_id: uuidv4(),
+        payment_number: Payment.generatePaymentNumber(),
+        booking_id: booking.booking_id,
+        customer_id: customerId,
+        amount: amountForThisBooking,
+        payment_date: paymentData.paymentDate || new Date().toISOString().split('T')[0],
+        payment_mode: paymentData.paymentMode,
+        payment_type: amountForThisBooking >= bookingDue ? 'full' : 'partial',
+        description: paymentData.description || `Bulk payment for booking ${booking.booking_number}`,
+        collected_by: paymentData.collectedBy || null,
+        collected_at_center: paymentData.collectedAtCenter || null,
+        status: 'completed',
+        is_active: 1
+      };
+      
+      const payment = await Payment.create(paymentRecord, { transaction });
+      
+      updatedBookings.push({
+        booking_id: booking.booking_id,
+        booking_number: booking.booking_number,
+        amount_paid: amountForThisBooking,
+        previous_due: bookingDue,
+        new_due: newDueAmount
+      });
+      
+      createdPayments.push(payment);
+      
+      remainingAmount -= amountForThisBooking;
+    }
+    
+    await transaction.commit();
+    
+    // Create a consolidated payment record for the bulk transaction (optional)
+    const bulkPaymentSummary = {
+      bulk_payment_id: uuidv4(),
+      total_amount: paymentAmount,
+      applied_to_bookings: updatedBookings.length,
+      remaining_amount: remainingAmount
+    };
+    
+    return {
+      success: true,
+      message: `Successfully processed payment of ${paymentAmount} for ${updatedBookings.length} bookings`,
+      summary: {
+        customer_id: customerId,
+        total_paid: paymentAmount,
+        bookings_updated: updatedBookings.length,
+        remaining_pending: remainingAmount
+      },
+      updated_bookings: updatedBookings,
+      payments: createdPayments.map(p => ({
+        payment_id: p.payment_id,
+        payment_number: p.payment_number,
+        amount: p.amount,
+        booking_id: p.booking_id
+      }))
+    };
+  } catch (error) {
+    await transaction.rollback();
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
+// =============================================
+// CUSTOMER PAYMENT RECORDS SERVICES
+// =============================================
+
+/**
+ * Get all customer payment records with paid and pending amounts
+ */
+async function getAllCustomerPaymentRecords(filters = {}) {
+  try {
+    const {
+      customerId,
+      startDate,
+      endDate,
+      paymentStatus,
+      page = 1,
+      limit = 20
+    } = filters;
+    
+    const offset = (page - 1) * limit;
+    
+    // Build where clause for payments
+    const paymentWhereClause = { is_active: 1 };
+    
+    if (customerId) {
+      paymentWhereClause.customer_id = customerId;
+    }
+    
+    if (startDate && endDate) {
+      paymentWhereClause.payment_date = {
+        [Op.between]: [startDate, endDate]
+      };
+    } else if (startDate) {
+      paymentWhereClause.payment_date = {
+        [Op.gte]: startDate
+      };
+    } else if (endDate) {
+      paymentWhereClause.payment_date = {
+        [Op.lte]: endDate
+      };
+    }
+    
+    if (paymentStatus) {
+      paymentWhereClause.status = paymentStatus;
+    }
+    
+    // Get all payments with their associated bookings
+    const payments = await Payment.findAndCountAll({
+      where: paymentWhereClause,
+      attributes: [
+        'payment_id',
+        'payment_number',
+        'amount',
+        'payment_date',
+        'payment_mode',
+        'payment_type',
+        'status',
+        'description',
+        'created_at'
+      ],
+      include: [
+        {
+          model: Booking,
+          as: 'booking',
+          attributes: [
+            'booking_id',
+            'booking_number',
+            'llr_number',
+            'booking_date',
+            'total_amount',
+            'paid_amount',
+            'due_amount',
+            'payment_status',
+            'delivery_status'
+          ],
+          include: [
+            {
+              model: Customer,
+              as: 'fromCustomer',
+              attributes: ['customer_id', 'customer_name', 'customer_number']
+            },
+            {
+              model: Customer,
+              as: 'toCustomer',
+              attributes: ['customer_id', 'customer_name', 'customer_number']
+            }
+          ]
+        },
+        {
+          model: Customer,
+          as: 'customer',
+          attributes: ['customer_id', 'customer_name', 'customer_number']
+        }
+      ],
+      order: [['payment_date', 'DESC'], ['created_at', 'DESC']],
+      limit,
+      offset,
+      distinct: true
+    });
+    
+    // Calculate summary statistics
+    const totalPaidAmount = payments.rows.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+    
+    // Get all unique customers from payments
+    const customerIds = [...new Set(payments.rows.map(p => p.customer_id).filter(id => id))];
+    
+    // Get pending amounts for these customers
+    const pendingAmounts = {};
+    
+    if (customerIds.length > 0) {
+      const pendingBookings = await Booking.findAll({
+        where: {
+          [Op.or]: [
+            { from_customer_id: { [Op.in]: customerIds } },
+            { to_customer_id: { [Op.in]: customerIds } }
+          ],
+          is_active: 1,
+          due_amount: { [Op.gt]: 0 }
+        },
+        attributes: [
+          'from_customer_id',
+          'to_customer_id',
+          'due_amount'
+        ]
+      });
+      
+      pendingBookings.forEach(booking => {
+        // Add to sender's pending amount
+        if (booking.from_customer_id) {
+          pendingAmounts[booking.from_customer_id] = (pendingAmounts[booking.from_customer_id] || 0) + parseFloat(booking.due_amount || 0);
+        }
+        // Add to receiver's pending amount if payment is by receiver
+        if (booking.to_customer_id) {
+          // You might want to check payment_by field to determine who should pay
+          pendingAmounts[booking.to_customer_id] = (pendingAmounts[booking.to_customer_id] || 0) + parseFloat(booking.due_amount || 0);
+        }
+      });
+    }
+    
+    // Format the response
+    const formattedPayments = payments.rows.map(payment => {
+      const paymentJson = payment.toJSON();
+      
+      // Determine which customer this payment belongs to (sender or receiver)
+      const isSenderPayment = paymentJson.booking?.from_customer_id === payment.customer_id;
+      
+      return {
+        ...paymentJson,
+        customer_type: isSenderPayment ? 'sender' : 'receiver',
+        pending_amount: pendingAmounts[payment.customer_id] || 0
+      };
+    });
+    
+    // Group by customer for summary
+    const customerSummary = {};
+    
+    formattedPayments.forEach(payment => {
+      const custId = payment.customer_id;
+      if (!customerSummary[custId]) {
+        customerSummary[custId] = {
+          customer_id: custId,
+          customer_name: payment.customer?.customer_name || 'Unknown',
+          customer_number: payment.customer?.customer_number || 'Unknown',
+          total_paid: 0,
+          total_pending: 0,
+          payment_count: 0,
+          last_payment_date: null
+        };
+      }
+      
+      customerSummary[custId].total_paid += parseFloat(payment.amount || 0);
+      customerSummary[custId].payment_count += 1;
+      customerSummary[custId].total_pending = pendingAmounts[custId] || 0;
+      
+      const paymentDate = payment.payment_date;
+      if (!customerSummary[custId].last_payment_date || paymentDate > customerSummary[custId].last_payment_date) {
+        customerSummary[custId].last_payment_date = paymentDate;
+      }
+    });
+    
+    return {
+      summary: {
+        total_payments: payments.count,
+        total_paid_amount: totalPaidAmount.toFixed(2),
+        unique_customers: Object.keys(customerSummary).length,
+        current_page: page,
+        total_pages: Math.ceil(payments.count / limit),
+        limit
+      },
+      customer_summary: Object.values(customerSummary),
+      records: formattedPayments
+    };
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
+/**
+ * Get customer payment summary (dashboard view)
+ */
+async function getCustomerPaymentSummary(customerId, type = 'sender') {
+  try {
+    // Build where clause based on customer type
+    const customerWhereClause = type === 'sender' 
+      ? { from_customer_id: customerId }
+      : { to_customer_id: customerId };
+    
+    // Get all bookings for this customer
+    const bookings = await Booking.findAll({
+      where: {
+        ...customerWhereClause,
+        is_active: 1
+      },
+      attributes: [
+        'booking_id',
+        'booking_number',
+        'booking_date',
+        'total_amount',
+        'paid_amount',
+        'due_amount',
+        'payment_status',
+        'delivery_status'
+      ],
+      order: [['booking_date', 'DESC']]
+    });
+    
+    // Get all payments for this customer
+    const payments = await Payment.findAll({
+      where: {
+        customer_id: customerId,
+        is_active: 1
+      },
+      attributes: [
+        'payment_id',
+        'payment_number',
+        'amount',
+        'payment_date',
+        'payment_mode',
+        'payment_type',
+        'status',
+        'description'
+      ],
+      include: [
+        {
+          model: Booking,
+          as: 'booking',
+          attributes: ['booking_id', 'booking_number']
+        }
+      ],
+      order: [['payment_date', 'DESC']]
+    });
+    
+    // Calculate statistics
+    const totalBookings = bookings.length;
+    const completedBookings = bookings.filter(b => b.delivery_status === 'delivered').length;
+    const pendingBookings = bookings.filter(b => b.delivery_status !== 'delivered').length;
+    
+    const totalAmount = bookings.reduce((sum, b) => sum + parseFloat(b.total_amount || 0), 0);
+    const totalPaid = bookings.reduce((sum, b) => sum + parseFloat(b.paid_amount || 0), 0);
+    const totalPending = bookings.reduce((sum, b) => sum + parseFloat(b.due_amount || 0), 0);
+    
+    const totalPayments = payments.length;
+    const totalPaymentAmount = payments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+    
+    // Get recent payments (last 5)
+    const recentPayments = payments.slice(0, 5);
+    
+    // Group payments by month for chart data
+    const paymentsByMonth = {};
+    payments.forEach(payment => {
+      const month = payment.payment_date.substring(0, 7); // YYYY-MM
+      if (!paymentsByMonth[month]) {
+        paymentsByMonth[month] = {
+          month,
+          total: 0,
+          count: 0
+        };
+      }
+      paymentsByMonth[month].total += parseFloat(payment.amount || 0);
+      paymentsByMonth[month].count += 1;
+    });
+    
+    // Get pending bookings (with due amount > 0)
+    const pendingBookingsList = bookings
+      .filter(b => parseFloat(b.due_amount) > 0)
+      .map(b => ({
+        booking_id: b.booking_id,
+        booking_number: b.booking_number,
+        booking_date: b.booking_date,
+        total_amount: b.total_amount,
+        paid_amount: b.paid_amount,
+        due_amount: b.due_amount,
+        payment_status: b.payment_status
+      }));
+    
+    return {
+      customer_id: customerId,
+      customer_type: type,
+      summary: {
+        total_bookings: totalBookings,
+        completed_bookings: completedBookings,
+        pending_bookings: pendingBookings,
+        total_amount: totalAmount.toFixed(2),
+        total_paid: totalPaid.toFixed(2),
+        total_pending: totalPending.toFixed(2),
+        payment_progress: totalAmount > 0 ? ((totalPaid / totalAmount) * 100).toFixed(2) : 0,
+        total_payments: totalPayments,
+        total_payment_amount: totalPaymentAmount.toFixed(2)
+      },
+      pending_bookings: pendingBookingsList,
+      recent_payments: recentPayments,
+      payment_trends: Object.values(paymentsByMonth).sort((a, b) => a.month.localeCompare(b.month))
+    };
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
 module.exports = {
   getBooking,
   createBooking,
@@ -1046,5 +1757,11 @@ module.exports = {
   deleteBooking,
   getBookingById,
   getBookingsByCustomer,
-  addBookingPayment 
+  addBookingPayment ,
+   // NEW EXPORTS
+  getCustomerPaymentsByDate,
+  getCustomerBookingsAndPayments,
+  makeCustomerBulkPayment,
+  getAllCustomerPaymentRecords,
+  getCustomerPaymentSummary
 };
