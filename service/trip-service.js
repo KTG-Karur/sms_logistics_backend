@@ -996,6 +996,218 @@ async function getAvailableLoadmen(tripDate) {
   }
 }
 
+
+// =============================================
+// UPDATE TRIP BOOKINGS (ADD/REMOVE)
+// =============================================
+
+/**
+ * Update trip bookings - add new bookings and/or remove existing bookings
+ */
+async function updateTripBookings(tripId, updateData) {
+  const transaction = await sequelize.transaction();
+  
+  try {
+    // Check if trip exists and is scheduled
+    const existingTrip = await Trip.findOne({
+      where: { 
+        trip_id: tripId, 
+        is_active: 1,
+        // status: 'scheduled' // Only allow updates to scheduled trips
+      },
+      include: [
+        {
+          model: Booking,
+          as: 'bookings',
+          through: { attributes: ['trip_booking_id'] },
+          attributes: ['booking_id', 'booking_number']
+        }
+      ],
+      transaction
+    });
+    
+    if (!existingTrip) {
+      throw new Error("Trip not found or cannot be updated (only scheduled trips can be modified)");
+    }
+    
+    const addBookingIds = updateData.addBookingIds || [];
+    const removeBookingIds = updateData.removeBookingIds || [];
+    
+    // Track changes for response
+    const addedBookings = [];
+    const removedBookings = [];
+    const errors = [];
+    
+    // ===== REMOVE BOOKINGS =====
+    if (removeBookingIds.length > 0) {
+      // Verify that the bookings to remove are actually part of this trip
+      const existingBookingIds = existingTrip.bookings.map(b => b.booking_id);
+      
+      const validRemoveIds = removeBookingIds.filter(id => existingBookingIds.includes(id));
+      const invalidRemoveIds = removeBookingIds.filter(id => !existingBookingIds.includes(id));
+      
+      if (invalidRemoveIds.length > 0) {
+        errors.push(`Bookings not found in this trip: ${invalidRemoveIds.join(', ')}`);
+      }
+      
+      if (validRemoveIds.length > 0) {
+        // Delete the trip bookings
+        const deleteCount = await TripBooking.destroy({
+          where: {
+            trip_id: tripId,
+            booking_id: { [Op.in]: validRemoveIds }
+          },
+          transaction
+        });
+        
+        // Get booking details for response
+        const removedBookingsData = existingTrip.bookings.filter(b => 
+          validRemoveIds.includes(b.booking_id)
+        );
+        
+        removedBookings.push(...removedBookingsData.map(b => ({
+          booking_id: b.booking_id,
+          booking_number: b.booking_number
+        })));
+      }
+    }
+    
+    // ===== ADD BOOKINGS =====
+    if (addBookingIds.length > 0) {
+      // Verify that the bookings to add are available (not started and not in another scheduled trip)
+      const existingBookingIds = existingTrip.bookings.map(b => b.booking_id);
+      
+      // Check which bookings are already in this trip
+      const alreadyInTrip = addBookingIds.filter(id => existingBookingIds.includes(id));
+      if (alreadyInTrip.length > 0) {
+        errors.push(`Bookings already in this trip: ${alreadyInTrip.join(', ')}`);
+      }
+      
+      // Find bookings that are not in this trip
+      const newBookingIds = addBookingIds.filter(id => !existingBookingIds.includes(id));
+      
+      if (newBookingIds.length > 0) {
+        // Check if these bookings are available (not started and not in other scheduled trips)
+        const bookingsInOtherTrips = await TripBooking.findAll({
+          where: {
+            booking_id: { [Op.in]: newBookingIds },
+            is_active: 1
+          },
+          include: [
+            {
+              model: Trip,
+              as: 'trip',
+              where: {
+                status: { [Op.in]: ['scheduled', 'in_progress'] },
+                is_active: 1,
+                trip_id: { [Op.ne]: tripId } // Not this trip
+              },
+              attributes: ['trip_id', 'trip_number']
+            }
+          ],
+          transaction
+        });
+        
+        if (bookingsInOtherTrips.length > 0) {
+          const conflictBookings = bookingsInOtherTrips.map(tb => ({
+            booking_id: tb.booking_id,
+            trip_id: tb.trip?.trip_id,
+            trip_number: tb.trip?.trip_number
+          }));
+          errors.push(`Some bookings are already assigned to other trips: ${JSON.stringify(conflictBookings)}`);
+        }
+        
+        // Check if bookings are in 'not_started' status
+        const bookingsToAdd = await Booking.findAll({
+          where: {
+            booking_id: { [Op.in]: newBookingIds },
+            delivery_status: 'not_started',
+            is_active: 1
+          },
+          attributes: ['booking_id', 'booking_number', 'total_amount'],
+          transaction
+        });
+        
+        if (bookingsToAdd.length !== newBookingIds.length) {
+          const foundIds = bookingsToAdd.map(b => b.booking_id);
+          const notFoundIds = newBookingIds.filter(id => !foundIds.includes(id));
+          errors.push(`Bookings not found or not available (status not 'not_started'): ${notFoundIds.join(', ')}`);
+        }
+        
+        // Add valid bookings to trip
+        if (bookingsToAdd.length > 0) {
+          // Calculate new totals
+          let additionalPackages = 0;
+          let additionalAmount = 0;
+          
+          for (const booking of bookingsToAdd) {
+            // Get package count for this booking
+            const packageCount = await BookingPackage.count({
+              where: { booking_id: booking.booking_id, is_active: 1 },
+              transaction
+            });
+            
+            additionalPackages += packageCount || 1; // At least 1 package per booking
+            additionalAmount += parseFloat(booking.total_amount || 0);
+            
+            // Create trip booking record
+            await TripBooking.create({
+              trip_booking_id: uuidv4(),
+              trip_id: tripId,
+              booking_id: booking.booking_id,
+              delivery_status: 'pending',
+              created_at: new Date(),
+              updated_at: new Date()
+            }, { transaction });
+            
+            addedBookings.push({
+              booking_id: booking.booking_id,
+              booking_number: booking.booking_number,
+              amount: booking.total_amount
+            });
+          }
+          
+          // Update trip totals
+          const newTotalPackages = (existingTrip.total_packages || 0) + additionalPackages;
+          const newTotalAmount = (parseFloat(existingTrip.total_amount || 0) + additionalAmount).toFixed(2);
+          
+          await Trip.update(
+            {
+              total_packages: newTotalPackages,
+              total_amount: newTotalAmount
+            },
+            {
+              where: { trip_id: tripId },
+              transaction
+            }
+          );
+        }
+      }
+    }
+    
+    // If there are errors but we still made some changes, we'll still commit but include errors in response
+    await transaction.commit();
+    
+    // Get updated trip details
+    const updatedTrip = await getTripById(tripId);
+    
+    return {
+      success: true,
+      message: `Trip bookings updated: ${addedBookings.length} added, ${removedBookings.length} removed`,
+      changes: {
+        added: addedBookings,
+        removed: removedBookings
+      },
+      errors: errors.length > 0 ? errors : undefined,
+      trip: updatedTrip
+    };
+    
+  } catch (error) {
+    await transaction.rollback();
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
 module.exports = {
   getTrips,
   getTripById,
@@ -1006,5 +1218,6 @@ module.exports = {
   getAvailableBookings,
   getAvailableVehicles,
   getAvailableDrivers,
-  getAvailableLoadmen
+  getAvailableLoadmen,
+  updateTripBookings
 };
