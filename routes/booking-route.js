@@ -662,6 +662,50 @@ async function getCustomerPaymentSummary(req, res) {
   }
 }
 
+// =============================================
+// GET ALL CUSTOMERS PAYMENT SUMMARY
+// =============================================
+
+/**
+ * Get all customers payment summary with paid/pending status
+ */
+async function getAllCustomersPaymentSummary(req, res) {
+  const responseEntries = new ResponseEntry();
+  
+  try {
+    const { 
+      search,
+      status, // 'all', 'paid', 'pending', 'partial'
+      sortBy = 'customer_name',
+      sortOrder = 'ASC',
+      page = 1,
+      limit = 20
+    } = req.query;
+    
+    const filters = {
+      search,
+      status,
+      sortBy,
+      sortOrder,
+      page: parseInt(page),
+      limit: parseInt(limit)
+    };
+    
+    responseEntries.data = await bookingServices.getAllCustomersPaymentSummary(filters);
+    
+    if (!responseEntries.data || responseEntries.data.customers.length === 0) {
+      responseEntries.message = messages.DATA_NOT_FOUND;
+    }
+  } catch (error) {
+    responseEntries.error = true;
+    responseEntries.message = error.message ? error.message : error;
+    responseEntries.code = error.code ? error.code : responseCode.BAD_REQUEST;
+    res.status(responseCode.BAD_REQUEST);
+  } finally {
+    res.send(responseEntries);
+  }
+}
+
 module.exports = async function (fastify) {
 
   fastify.route({
@@ -755,6 +799,14 @@ module.exports = async function (fastify) {
     url: "/customers/:customerId/payment-summary",
     // preHandler: verifyToken,
     handler: getCustomerPaymentSummary,
+  });
+
+    // NEW ROUTE FOR ALL CUSTOMERS PAYMENT SUMMARY
+  fastify.route({
+    method: "GET",
+    url: "/customers/payment-summary/all",
+    // preHandler: verifyToken,
+    handler: getAllCustomersPaymentSummary,
   });
 
 };
