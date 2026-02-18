@@ -706,7 +706,38 @@ async function getAllCustomersPaymentSummary(req, res) {
   }
 }
 
+async function getCustomerPendingPayments(req, res) {
+  const responseEntries = new ResponseEntry();
+  
+  try {
+    if (!req.params.customerId) {
+      throw new Error("Customer ID is required");
+    }
+    
+    responseEntries.data = await bookingServices.getCustomerPendingPayments(
+      req.params.customerId
+    );
+    
+    if (!responseEntries.data || responseEntries.data.pending_bookings.length === 0) {
+      responseEntries.message = "No pending payments found";
+    }
+  } catch (error) {
+    responseEntries.error = true;
+    responseEntries.message = error.message ? error.message : error;
+    responseEntries.code = error.code ? error.code : responseCode.BAD_REQUEST;
+    res.status(responseCode.BAD_REQUEST);
+  } finally {
+    res.send(responseEntries);
+  }
+}
 module.exports = async function (fastify) {
+  
+  fastify.route({
+    method: "GET",
+    url: "/customers/:customerId/pending-payments",
+    // preHandler: verifyToken,
+    handler: getCustomerPendingPayments,
+  });
 
   fastify.route({
     method: "POST",

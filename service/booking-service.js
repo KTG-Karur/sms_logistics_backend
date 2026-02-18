@@ -2200,6 +2200,192 @@ async function getAllCustomersPaymentSummary(filters = {}) {
   }
 }
 
+async function getCustomerPendingPayments(customerId) {
+  try {
+    const bookings = await Booking.findAll({
+      where: {
+        [Op.or]: [
+          { from_customer_id: customerId },
+          { to_customer_id: customerId }
+        ],
+        is_active: 1,
+        [Op.or]: [
+          { due_amount: { [Op.gt]: 0 } },  // Has pending amount
+          { payment_status: 'pending' },    // Payment status pending
+          { payment_status: 'partial' }     // Payment status partial
+        ]
+      },
+      attributes: [
+        'booking_id',
+        'booking_number',
+        'llr_number',
+        'booking_date',
+        'from_center_id',
+        'to_center_id',
+        'from_customer_id',
+        'to_customer_id',
+        'total_amount',
+        'paid_amount',
+        'due_amount',
+        'payment_by',        // 'sender' or 'receiver' - tells who is responsible
+        'payment_status',
+        'delivery_status',
+        'special_instructions',
+        'reference_number',
+        'created_at'
+      ],
+      include: [
+        {
+          model: OfficeCenter,
+          as: 'fromCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        },
+        {
+          model: OfficeCenter,
+          as: 'toCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        },
+        {
+          model: Customer,
+          as: 'fromCustomer',
+          attributes: ['customer_id', 'customer_name', 'customer_number']  // Sender info
+        },
+        {
+          model: Customer,
+          as: 'toCustomer',
+          attributes: ['customer_id', 'customer_name', 'customer_number']  // Receiver info
+        },
+        {
+          model: BookingPackage,
+          as: 'packages',
+          attributes: [
+            'booking_package_id',
+            'package_type_id',
+            'quantity',
+            'pickup_charge',
+            'drop_charge',
+            'handling_charge',
+            'total_package_charge'
+          ],
+          include: [
+            {
+              model: PackageType,
+              as: 'packageType',
+              attributes: ['package_type_id', 'package_type_name']
+            }
+          ]
+        }
+      ],
+      order: [['booking_date', 'DESC'], ['created_at', 'DESC']]
+    });
+
+    if (!bookings || bookings.length === 0) {
+      return {
+        customer_id: customerId,
+        customer_info: null,
+        message: "No pending payments found for this customer",
+        total_pending_amount: 0,
+        pending_bookings: []
+      };
+    }
+
+    const customerInfo = await Customer.findOne({
+      where: { customer_id: customerId, is_active: 1 },
+      attributes: ['customer_id', 'customer_name', 'customer_number']
+    });
+
+    const processedBookings = bookings.map(booking => {
+      const bookingJson = booking.toJSON();
+      
+      let customerRole = null;
+      let responsibleParty = null;
+      
+      if (booking.from_customer_id === customerId) {
+        customerRole = 'sender';
+      } else if (booking.to_customer_id === customerId) {
+        customerRole = 'receiver';
+      }
+      
+      if (booking.payment_by === 'sender') {
+        responsibleParty = {
+          role: 'sender',
+          customer_id: booking.from_customer_id,
+          customer_name: booking.fromCustomer?.customer_name,
+          customer_number: booking.fromCustomer?.customer_number
+        };
+      } else if (booking.payment_by === 'receiver') {
+        responsibleParty = {
+          role: 'receiver',
+          customer_id: booking.to_customer_id,
+          customer_name: booking.toCustomer?.customer_name,
+          customer_number: booking.toCustomer?.customer_number
+        };
+      }
+      
+      const isResponsibleForPayment = 
+        (booking.payment_by === 'sender' && booking.from_customer_id === customerId) ||
+        (booking.payment_by === 'receiver' && booking.to_customer_id === customerId);
+      
+      return {
+        ...bookingJson,
+        customer_role: customerRole,
+        is_responsible_for_payment: isResponsibleForPayment,
+        responsible_party: responsibleParty,
+        sender: {
+          customer_id: booking.from_customer_id,
+          customer_name: booking.fromCustomer?.customer_name,
+          customer_number: booking.fromCustomer?.customer_number
+        },
+        receiver: {
+          customer_id: booking.to_customer_id,
+          customer_name: booking.toCustomer?.customer_name,
+          customer_number: booking.toCustomer?.customer_number
+        },
+        payment_progress: {
+          total: parseFloat(booking.total_amount || 0).toFixed(2),
+          paid: parseFloat(booking.paid_amount || 0).toFixed(2),
+          due: parseFloat(booking.due_amount || 0).toFixed(2),
+          percentage_paid: booking.total_amount > 0 
+            ? ((parseFloat(booking.paid_amount || 0) / parseFloat(booking.total_amount || 0)) * 100).toFixed(2)
+            : 0
+        }
+      };
+    });
+
+    const totalPendingAmount = bookings.reduce(
+      (sum, booking) => sum + parseFloat(booking.due_amount || 0), 
+      0
+    );
+
+    const responsibleBookings = processedBookings.filter(b => b.is_responsible_for_payment);
+    const involvedBookings = processedBookings.filter(b => !b.is_responsible_for_payment);
+
+    return {
+      customer_id: customerId,
+      customer_info: customerInfo ? {
+        customer_id: customerInfo.customer_id,
+        customer_name: customerInfo.customer_name,
+        customer_number: customerInfo.customer_number
+      } : null,
+      summary: {
+        total_pending_bookings: bookings.length,
+        total_pending_amount: totalPendingAmount.toFixed(2),
+        total_responsible_amount: responsibleBookings.reduce(
+          (sum, b) => sum + parseFloat(b.due_amount || 0), 0
+        ).toFixed(2),
+        bookings_where_customer_pays: responsibleBookings.length,
+        bookings_where_others_pay: involvedBookings.length
+      },
+      pending_bookings: processedBookings,
+      bookings_customer_must_pay: responsibleBookings,
+      bookings_others_must_pay: involvedBookings
+    };
+    
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
 module.exports = {
   getBooking,
   createBooking,
@@ -2215,5 +2401,6 @@ module.exports = {
   makeCustomerBulkPayment,
   getAllCustomerPaymentRecords,
   getCustomerPaymentSummary,
-  getAllCustomersPaymentSummary
+  getAllCustomersPaymentSummary,
+  getCustomerPendingPayments
 };
