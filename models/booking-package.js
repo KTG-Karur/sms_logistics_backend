@@ -27,7 +27,12 @@ module.exports = (sequelize, DataTypes) => {
         as: "createdBy",
         constraints: false,
       });
-
+ this.hasMany(models.PackageLoadman, {
+        foreignKey: 'booking_package_id',
+        sourceKey: 'booking_package_id',
+        as: 'packageLoadmen',
+        constraints: false
+      });
       this.belongsTo(models.Employee, {
         foreignKey: "updated_by",
         targetKey: "employee_id",

@@ -12,7 +12,7 @@ const {
   Vehicle,
   Employee,
   OfficeCenter,
-  Customer,
+  Customer,PackageType,PackageLoadman,
   sequelize 
 } = require("../models");
 const { v4: uuidv4 } = require('uuid');
@@ -210,7 +210,7 @@ async function getTripById(tripId) {
           as: 'bookings',
           through: { 
             model: TripBooking, 
-            attributes: ['delivery_status'] 
+            attributes: ['trip_booking_id', 'delivery_status'] // Include trip_booking_id for reference
           },
           attributes: [
             'booking_id',
@@ -218,12 +218,78 @@ async function getTripById(tripId) {
             'llr_number',
             'from_center_id',
             'to_center_id',
+            'from_customer_id',
+            'to_customer_id',
             'total_amount',
             'paid_amount',
             'due_amount',
+            'payment_by',
+            'payment_status',
             'delivery_status'
           ],
-          required: false
+          required: false,
+          include: [
+            {
+              model: BookingPackage,
+              as: 'packages',
+              attributes: [
+                'booking_package_id',
+                'package_type_id',
+                'quantity',
+                'pickup_charge',
+                'drop_charge',
+                'handling_charge',
+                'total_package_charge'
+              ],
+              where: { is_active: 1 },
+              required: false,
+              include: [
+                {
+                  model: PackageType,
+                  as: 'packageType',
+                  attributes: ['package_type_id', 'package_type_name']
+                },
+                {
+                  model: PackageLoadman,
+                  as: 'packageLoadmen',
+                  where: { is_active: 1 },
+                  required: false,
+                  attributes: [
+                    'package_loadman_id',
+                    'loadman_type',
+                    'amount_earned'
+                  ],
+                  include: [
+                    {
+                      model: Employee,
+                      as: 'loadman',
+                      attributes: ['employee_id', 'employee_name', 'mobile_no']
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              model: Customer,
+              as: 'fromCustomer',
+              attributes: ['customer_id', 'customer_name', 'customer_number']
+            },
+            {
+              model: Customer,
+              as: 'toCustomer',
+              attributes: ['customer_id', 'customer_name', 'customer_number']
+            },
+            {
+              model: OfficeCenter,
+              as: 'fromCenter',
+              attributes: ['office_center_id', 'office_center_name']
+            },
+            {
+              model: OfficeCenter,
+              as: 'toCenter',
+              attributes: ['office_center_id', 'office_center_name']
+            }
+          ]
         }
       ]
     });
@@ -235,6 +301,11 @@ async function getTripById(tripId) {
     // Log to verify data is coming through
     console.log("Loadmen count:", trip.loadmen?.length || 0);
     console.log("Bookings count:", trip.bookings?.length || 0);
+    
+    // Log packages for first booking if exists
+    if (trip.bookings && trip.bookings.length > 0) {
+      console.log("First booking packages:", trip.bookings[0].packages?.length || 0);
+    }
 
     return trip;
   } catch (error) {

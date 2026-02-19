@@ -1,23 +1,34 @@
-// models/openingbalance.js
-'use strict';
+"use strict";
 
 const { Model, UUIDV4 } = require("sequelize");
 
 module.exports = (sequelize, DataTypes) => {
-  class OpeningBalance extends Model {
-    /**
-     * Helper method for defining associations.
-     */
+  class PackageLoadman extends Model {
     static associate(models) {
-      // Add association with OfficeCenter
-      this.belongsTo(models.OfficeCenter, {
-        foreignKey: 'office_center_id',
-        targetKey: 'office_center_id',
-        as: 'officeCenter',
+      // PackageLoadman belongs to TripBooking
+      this.belongsTo(models.TripBooking, {
+        foreignKey: 'trip_booking_id',
+        targetKey: 'trip_booking_id',
+        as: 'tripBooking',
         constraints: false
       });
 
-      // Keep employee associations
+      // PackageLoadman belongs to BookingPackage
+      this.belongsTo(models.BookingPackage, {
+        foreignKey: 'booking_package_id',
+        targetKey: 'booking_package_id',
+        as: 'bookingPackage',
+        constraints: false
+      });
+
+      // PackageLoadman belongs to Employee (loadman)
+      this.belongsTo(models.Employee, {
+        foreignKey: 'loadman_id',
+        targetKey: 'employee_id',
+        as: 'loadman',
+        constraints: false
+      });
+
       this.belongsTo(models.Employee, {
         foreignKey: "created_by",
         targetKey: "employee_id",
@@ -34,56 +45,54 @@ module.exports = (sequelize, DataTypes) => {
     }
   }
 
-  OpeningBalance.init(
+  PackageLoadman.init(
     {
       id: {
         type: DataTypes.INTEGER,
         primaryKey: true,
         autoIncrement: true,
       },
-      opening_balance_id: {
+      package_loadman_id: {
         type: DataTypes.STRING,
         primaryKey: true,
         defaultValue: UUIDV4,
       },
-      date: {
-        type: DataTypes.DATEONLY,
-        allowNull: false,
-        validate: {
-          isDate: {
-            msg: "Please provide a valid date"
-          },
-          notEmpty: {
-            msg: "Date is required"
-          }
-        }
-      },
-      office_center_id: {
+      trip_booking_id: {
         type: DataTypes.STRING,
         allowNull: false,
         validate: {
           notEmpty: {
-            msg: "Office center ID is required"
+            msg: "Trip booking ID is required"
           }
         }
       },
-      opening_balance: {
-        type: DataTypes.DECIMAL(15, 2),
+      booking_package_id: {
+        type: DataTypes.STRING(255),
+        allowNull: false,
+        validate: {
+          notEmpty: {
+            msg: "Booking package ID is required"
+          }
+        }
+      },
+      loadman_id: {
+        type: DataTypes.STRING(255),
+        allowNull: false,
+        validate: {
+          notEmpty: {
+            msg: "Loadman ID is required"
+          }
+        }
+      },
+      loadman_type: {
+        type: DataTypes.ENUM('pickup', 'drop', 'both'),
+        allowNull: false,
+        defaultValue: 'both',
+      },
+      amount_earned: {
+        type: DataTypes.DECIMAL(10, 2),
         allowNull: false,
         defaultValue: 0.00,
-        validate: {
-          isDecimal: {
-            msg: "Opening balance must be a valid decimal number"
-          },
-          min: {
-            args: [0],
-            msg: "Opening balance cannot be negative"
-          }
-        }
-      },
-      notes: {
-        type: DataTypes.TEXT,
-        allowNull: true
       },
       is_active: {
         type: DataTypes.BOOLEAN,
@@ -112,27 +121,12 @@ module.exports = (sequelize, DataTypes) => {
     },
     {
       sequelize,
-      modelName: "OpeningBalance",
-      tableName: "opening_balance",
+      modelName: "PackageLoadman",
+      tableName: "package_loadmen",
       timestamps: true,
       paranoid: true,
-      indexes: [
-        {
-          fields: ['date'],
-          name: 'idx_opening_balance_date'
-        },
-        {
-          fields: ['office_center_id'],
-          name: 'idx_opening_balance_office_center_id'
-        },
-        {
-          fields: ['date', 'office_center_id'],
-          name: 'idx_opening_balance_date_office_center',
-          unique: true
-        }
-      ]
     }
   );
 
-  return OpeningBalance;
+  return PackageLoadman;
 };
