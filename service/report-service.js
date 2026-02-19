@@ -1,0 +1,1201 @@
+"use strict";
+
+const messages = require("../helpers/message");
+const _ = require("lodash");
+const { Op, fn, col, literal } = require("sequelize");
+const { 
+  Booking, 
+  BookingPackage, 
+  Payment, 
+  Trip, 
+  TripBooking,Vehicle,
+  Expense,
+  ExpensePayment,
+  OpeningBalance,
+  OfficeCenter,
+  Customer,
+  Employee,
+  sequelize 
+} = require("../models");
+
+// =============================================
+// PROFIT & LOSS REPORT
+// =============================================
+
+/**
+ * Get daily profit & loss report
+ */
+async function getDailyProfitLoss(date, centerId = null) {
+  try {
+    const reportDate = date || new Date().toISOString().split('T')[0];
+    
+    // Get opening balance for the date
+    const openingBalance = await OpeningBalance.findOne({
+      where: {
+        date: reportDate,
+        ...(centerId && { office_center_id: centerId }),
+        is_active: 1
+      }
+    });
+
+    // Get all payments received on this date
+    const paymentsWhere = {
+      payment_date: reportDate,
+      is_active: 1,
+      status: 'completed'
+    };
+    if (centerId) {
+      paymentsWhere.collected_at_center = centerId;
+    }
+
+    const payments = await Payment.findAll({
+      where: paymentsWhere,
+      attributes: [
+        'payment_id',
+        'payment_number',
+        'amount',
+        'payment_mode',
+        'booking_id',
+        'collected_at_center'
+      ],
+      include: [
+        {
+          model: Booking,
+          as: 'booking',
+          attributes: ['booking_id', 'booking_number']
+        }
+      ]
+    });
+
+    // Get all expenses on this date
+    const expensesWhere = {
+      expense_date: reportDate,
+      is_active: 1
+    };
+    if (centerId) {
+      expensesWhere.office_center_id = centerId;
+    }
+
+    const expenses = await Expense.findAll({
+      where: expensesWhere,
+      attributes: [
+        'expense_id',
+        'expense_date',
+        'amount',
+        'paid_amount',
+        'description'
+      ],
+      include: [
+        {
+          model: ExpensePayment,
+          as: 'payments',
+          attributes: ['amount', 'payment_type'],
+          where: { 
+            payment_date: reportDate,
+            is_active: 1 
+          },
+          required: false
+        },
+        {
+          model: sequelize.models.expence_type,
+          as: 'expenseType',
+          attributes: ['expence_type_id', 'expence_type_name']
+        }
+      ]
+    });
+
+    // Calculate totals
+    const totalPayments = payments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+    const totalExpenses = expenses.reduce((sum, e) => sum + parseFloat(e.paid_amount || e.amount || 0), 0);
+    
+    // Get expense payments separately
+    const expensePayments = await ExpensePayment.findAll({
+      where: {
+        payment_date: reportDate,
+        is_active: 1
+      },
+      include: [
+        {
+          model: Expense,
+          as: 'expense',
+          attributes: ['expense_id', 'description'],
+          where: centerId ? { office_center_id: centerId } : {}
+        }
+      ]
+    });
+
+    const totalExpensePayments = expensePayments.reduce((sum, ep) => sum + parseFloat(ep.amount || 0), 0);
+
+    // Calculate net profit/loss
+    const openingAmount = parseFloat(openingBalance?.opening_balance || 0);
+    const closingAmount = openingAmount + totalPayments - totalExpensePayments;
+    const profitLoss = totalPayments - totalExpensePayments;
+
+    return {
+      date: reportDate,
+      center_id: centerId,
+      center_name: centerId ? (await OfficeCenter.findByPk(centerId))?.office_center_name : 'All Centers',
+      opening_balance: openingAmount.toFixed(2),
+      summary: {
+        total_payments: payments.length,
+        total_payment_amount: totalPayments.toFixed(2),
+        total_expenses: expenses.length,
+        total_expense_amount: totalExpenses.toFixed(2),
+        total_expense_payments: totalExpensePayments.toFixed(2),
+        profit_loss: profitLoss.toFixed(2),
+        profit_loss_status: profitLoss >= 0 ? 'profit' : 'loss',
+        closing_balance: closingAmount.toFixed(2)
+      },
+      payments: payments.map(p => ({
+        payment_id: p.payment_id,
+        payment_number: p.payment_number,
+        amount: p.amount,
+        mode: p.payment_mode,
+        booking_number: p.booking?.booking_number
+      })),
+      expenses: expenses.map(e => ({
+        expense_id: e.expense_id,
+        type: e.expenseType?.expence_type_name,
+        amount: e.amount,
+        paid: e.paid_amount,
+        description: e.description,
+        payments: e.payments
+      }))
+    };
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
+/**
+ * Get date range profit & loss report
+ */
+async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
+  try {
+    // Get opening balance for start date
+    const openingBalance = await OpeningBalance.findOne({
+      where: {
+        date: startDate,
+        ...(centerId && { office_center_id: centerId }),
+        is_active: 1
+      }
+    });
+
+    // Get all payments in date range
+    const paymentsWhere = {
+      payment_date: {
+        [Op.between]: [startDate, endDate]
+      },
+      is_active: 1,
+      status: 'completed'
+    };
+    if (centerId) {
+      paymentsWhere.collected_at_center = centerId;
+    }
+
+    const payments = await Payment.findAll({
+  where: paymentsWhere,
+  attributes: [
+    'payment_id',
+    'payment_number',
+    [sequelize.col('Payment.amount'), 'amount'], // Explicitly specify table
+    'payment_date',
+    'payment_mode',
+    'booking_id'
+  ],
+  order: [['payment_date', 'ASC']]
+});
+
+    // Get all expense payments in date range
+    const expensePaymentsWhere = {
+      payment_date: {
+        [Op.between]: [startDate, endDate]
+      },
+      is_active: 1
+    };
+
+    const expensePayments = await ExpensePayment.findAll({
+  where: expensePaymentsWhere,
+  attributes: [
+    'expense_payment_id',
+    [sequelize.col('ExpensePayment.amount'), 'amount'], // Explicitly specify table
+    'payment_date',
+    'payment_type',
+    'notes'
+  ],
+  include: [
+    {
+      model: Expense,
+      as: 'expense',
+      attributes: ['expense_id', 'description', 'expense_type_id'],
+      where: centerId ? { office_center_id: centerId } : {},
+      include: [
+        {
+          model: sequelize.models.expence_type,
+          as: 'expenseType',
+          attributes: ['expence_type_id', 'expence_type_name']
+        }
+      ]
+    }
+  ],
+  order: [['payment_date', 'ASC']]
+});
+
+    // Group by date
+    const dailyBreakdown = {};
+    const allDates = [...new Set([
+      ...payments.map(p => p.payment_date),
+      ...expensePayments.map(ep => ep.payment_date)
+    ])].sort();
+
+    for (const date of allDates) {
+      const dayPayments = payments.filter(p => p.payment_date === date);
+      const dayExpenses = expensePayments.filter(ep => ep.payment_date === date);
+      
+      const dayPaymentTotal = dayPayments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+      const dayExpenseTotal = dayExpenses.reduce((sum, ep) => sum + parseFloat(ep.amount || 0), 0);
+      
+      dailyBreakdown[date] = {
+        date,
+        payments: dayPayments.length,
+        payment_total: dayPaymentTotal.toFixed(2),
+        expenses: dayExpenses.length,
+        expense_total: dayExpenseTotal.toFixed(2),
+        net: (dayPaymentTotal - dayExpenseTotal).toFixed(2)
+      };
+    }
+
+    // Calculate totals
+    const totalPayments = payments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+    const totalExpenses = expensePayments.reduce((sum, ep) => sum + parseFloat(ep.amount || 0), 0);
+    const profitLoss = totalPayments - totalExpenses;
+
+    // Group by expense type
+    const expenseByType = {};
+    expensePayments.forEach(ep => {
+      const typeName = ep.expense?.expenseType?.expence_type_name || 'Other';
+      if (!expenseByType[typeName]) {
+        expenseByType[typeName] = {
+          type: typeName,
+          total: 0,
+          count: 0
+        };
+      }
+      expenseByType[typeName].total += parseFloat(ep.amount || 0);
+      expenseByType[typeName].count += 1;
+    });
+
+    // Group payments by mode
+    const paymentsByMode = {};
+    payments.forEach(p => {
+      const mode = p.payment_mode || 'other';
+      if (!paymentsByMode[mode]) {
+        paymentsByMode[mode] = {
+          mode,
+          total: 0,
+          count: 0
+        };
+      }
+      paymentsByMode[mode].total += parseFloat(p.amount || 0);
+      paymentsByMode[mode].count += 1;
+    });
+
+    return {
+      date_range: {
+        start_date: startDate,
+        end_date: endDate
+      },
+      center_id: centerId,
+      center_name: centerId ? (await OfficeCenter.findByPk(centerId))?.office_center_name : 'All Centers',
+      opening_balance: parseFloat(openingBalance?.opening_balance || 0).toFixed(2),
+      summary: {
+        total_payments: payments.length,
+        total_payment_amount: totalPayments.toFixed(2),
+        total_expense_payments: expensePayments.length,
+        total_expense_amount: totalExpenses.toFixed(2),
+        profit_loss: profitLoss.toFixed(2),
+        profit_loss_status: profitLoss >= 0 ? 'profit' : 'loss',
+        closing_balance: (parseFloat(openingBalance?.opening_balance || 0) + profitLoss).toFixed(2)
+      },
+      breakdown: {
+        daily: Object.values(dailyBreakdown),
+        by_payment_mode: Object.values(paymentsByMode),
+        by_expense_type: Object.values(expenseByType)
+      },
+      payments: payments.map(p => ({
+        date: p.payment_date,
+        payment_number: p.payment_number,
+        amount: p.amount,
+        mode: p.payment_mode
+      })),
+      expenses: expensePayments.map(ep => ({
+        date: ep.payment_date,
+        type: ep.expense?.expenseType?.expence_type_name,
+        amount: ep.amount,
+        description: ep.expense?.description,
+        notes: ep.notes
+      }))
+    };
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
+// =============================================
+// PACKAGE REPORT
+// =============================================
+
+/**
+ * Get package report with filters
+ */
+async function getPackageReport(filters = {}) {
+  try {
+    const {
+      startDate,
+      endDate,
+      centerId,
+      packageTypeId,
+      customerId,
+      status,
+      page = 1,
+      limit = 20
+    } = filters;
+
+    const offset = (page - 1) * limit;
+
+    // Build where clause for bookings
+    const bookingWhere = { is_active: 1 };
+    if (startDate && endDate) {
+      bookingWhere.booking_date = {
+        [Op.between]: [startDate, endDate]
+      };
+    }
+    if (centerId) {
+      bookingWhere[Op.or] = [
+        { from_center_id: centerId },
+        { to_center_id: centerId }
+      ];
+    }
+    if (customerId) {
+      bookingWhere[Op.or] = [
+        { from_customer_id: customerId },
+        { to_customer_id: customerId }
+      ];
+    }
+    if (status) {
+      bookingWhere.delivery_status = status;
+    }
+
+    // Get packages with their bookings
+    const packages = await BookingPackage.findAndCountAll({
+      where: { is_active: 1 },
+      attributes: [
+        'booking_package_id',
+        'package_type_id',
+        'quantity',
+        'pickup_charge',
+        'drop_charge',
+        'handling_charge',
+        'total_package_charge',
+        'created_at'
+      ],
+      include: [
+        {
+          model: Booking,
+          as: 'booking',
+          where: bookingWhere,
+          attributes: [
+            'booking_id',
+            'booking_number',
+            'booking_date',
+            'from_center_id',
+            'to_center_id',
+            'from_customer_id',
+            'to_customer_id',
+            'delivery_status'
+          ],
+          include: [
+            {
+              model: OfficeCenter,
+              as: 'fromCenter',
+              attributes: ['office_center_id', 'office_center_name']
+            },
+            {
+              model: OfficeCenter,
+              as: 'toCenter',
+              attributes: ['office_center_id', 'office_center_name']
+            },
+            {
+              model: Customer,
+              as: 'fromCustomer',
+              attributes: ['customer_id', 'customer_name', 'customer_number']
+            },
+            {
+              model: Customer,
+              as: 'toCustomer',
+              attributes: ['customer_id', 'customer_name', 'customer_number']
+            }
+          ]
+        },
+        {
+          model: sequelize.models.PackageType,
+          as: 'packageType',
+          where: packageTypeId ? { package_type_id: packageTypeId } : {},
+          attributes: ['package_type_id', 'package_type_name']
+        }
+      ],
+      order: [['created_at', 'DESC']],
+      limit,
+      offset,
+      distinct: true
+    });
+
+    // Calculate summary statistics
+    const totalPickupCharges = packages.rows.reduce((sum, p) => sum + parseFloat(p.pickup_charge || 0) * p.quantity, 0);
+    const totalDropCharges = packages.rows.reduce((sum, p) => sum + parseFloat(p.drop_charge || 0) * p.quantity, 0);
+    const totalHandlingCharges = packages.rows.reduce((sum, p) => sum + parseFloat(p.handling_charge || 0) * p.quantity, 0);
+    const totalAmount = packages.rows.reduce((sum, p) => sum + parseFloat(p.total_package_charge || 0), 0);
+    const totalQuantity = packages.rows.reduce((sum, p) => sum + p.quantity, 0);
+
+    // Group by package type
+    const byPackageType = {};
+    packages.rows.forEach(pkg => {
+      const typeId = pkg.packageType?.package_type_id;
+      const typeName = pkg.packageType?.package_type_name || 'Unknown';
+      if (!byPackageType[typeId]) {
+        byPackageType[typeId] = {
+          package_type_id: typeId,
+          package_type_name: typeName,
+          count: 0,
+          quantity: 0,
+          total_amount: 0
+        };
+      }
+      byPackageType[typeId].count += 1;
+      byPackageType[typeId].quantity += pkg.quantity;
+      byPackageType[typeId].total_amount += parseFloat(pkg.total_package_charge || 0);
+    });
+
+    return {
+      summary: {
+        total_packages: packages.count,
+        total_quantity: totalQuantity,
+        total_pickup_charges: totalPickupCharges.toFixed(2),
+        total_drop_charges: totalDropCharges.toFixed(2),
+        total_handling_charges: totalHandlingCharges.toFixed(2),
+        total_amount: totalAmount.toFixed(2),
+        average_per_package: packages.count > 0 ? (totalAmount / packages.count).toFixed(2) : 0
+      },
+      by_package_type: Object.values(byPackageType),
+      packages: packages.rows,
+      pagination: {
+        current_page: page,
+        total_pages: Math.ceil(packages.count / limit),
+        total_records: packages.count,
+        limit
+      }
+    };
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
+// =============================================
+// TRIP REPORT
+// =============================================
+
+/**
+ * Get trip report with filters
+ */
+async function getTripReport(filters = {}) {
+  try {
+    const {
+      startDate,
+      endDate,
+      centerId,
+      driverId,
+      vehicleId,
+      status,
+      page = 1,
+      limit = 20
+    } = filters;
+
+    const offset = (page - 1) * limit;
+
+    const whereClause = { is_active: 1 };
+    
+    if (startDate && endDate) {
+      whereClause.trip_date = {
+        [Op.between]: [startDate, endDate]
+      };
+    }
+    if (centerId) {
+      whereClause[Op.or] = [
+        { from_center_id: centerId },
+        { to_center_id: centerId }
+      ];
+    }
+    if (driverId) {
+      whereClause.driver_id = driverId;
+    }
+    if (vehicleId) {
+      whereClause.vehicle_id = vehicleId;
+    }
+    if (status) {
+      whereClause.status = status;
+    }
+
+    const trips = await Trip.findAndCountAll({
+      where: whereClause,
+      attributes: [
+        'trip_id',
+        'trip_number',
+        'trip_date',
+        'from_center_id',
+        'to_center_id',
+        'vehicle_id',
+        'driver_id',
+        'estimated_departure',
+        'estimated_arrival',
+        'actual_departure',
+        'actual_arrival',
+        'status',
+        'total_packages',
+        'total_amount',
+        'created_at'
+      ],
+      include: [
+        {
+          model: OfficeCenter,
+          as: 'fromCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        },
+        {
+          model: OfficeCenter,
+          as: 'toCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        },
+        {
+          model: Vehicle,
+          as: 'vehicle',
+          attributes: ['vehicle_id', 'vehicle_number_plate']
+        },
+        {
+          model: Employee,
+          as: 'driver',
+          attributes: ['employee_id', 'employee_name', 'mobile_no']
+        },
+        {
+          model: Employee,
+          as: 'loadmen',
+          through: { attributes: [] },
+          attributes: ['employee_id', 'employee_name']
+        },
+        {
+          model: Booking,
+          as: 'bookings',
+          through: { attributes: [] },
+          attributes: ['booking_id', 'booking_number']
+        }
+      ],
+      order: [['trip_date', 'DESC'], ['created_at', 'DESC']],
+      limit,
+      offset,
+      distinct: true
+    });
+
+    // Calculate summary statistics
+    const totalTrips = trips.count;
+    const totalPackages = trips.rows.reduce((sum, t) => sum + (t.total_packages || 0), 0);
+    const totalAmount = trips.rows.reduce((sum, t) => sum + parseFloat(t.total_amount || 0), 0);
+    
+    const statusCount = {
+      scheduled: trips.rows.filter(t => t.status === 'scheduled').length,
+      in_progress: trips.rows.filter(t => t.status === 'in_progress').length,
+      completed: trips.rows.filter(t => t.status === 'completed').length,
+      cancelled: trips.rows.filter(t => t.status === 'cancelled').length
+    };
+
+    // Group by center
+    const byCenter = {};
+    trips.rows.forEach(trip => {
+      const centerId = trip.from_center_id;
+      const centerName = trip.fromCenter?.office_center_name || 'Unknown';
+      if (!byCenter[centerId]) {
+        byCenter[centerId] = {
+          center_id: centerId,
+          center_name: centerName,
+          trip_count: 0,
+          package_count: 0,
+          total_amount: 0
+        };
+      }
+      byCenter[centerId].trip_count += 1;
+      byCenter[centerId].package_count += trip.total_packages || 0;
+      byCenter[centerId].total_amount += parseFloat(trip.total_amount || 0);
+    });
+
+    return {
+      summary: {
+        total_trips: totalTrips,
+        total_packages: totalPackages,
+        total_amount: totalAmount.toFixed(2),
+        average_packages_per_trip: totalTrips > 0 ? (totalPackages / totalTrips).toFixed(2) : 0,
+        average_amount_per_trip: totalTrips > 0 ? (totalAmount / totalTrips).toFixed(2) : 0,
+        by_status: statusCount
+      },
+      by_center: Object.values(byCenter),
+      trips: trips.rows,
+      pagination: {
+        current_page: page,
+        total_pages: Math.ceil(totalTrips / limit),
+        total_records: totalTrips,
+        limit
+      }
+    };
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
+// =============================================
+// OPENING & CLOSING BALANCE REPORT
+// =============================================
+
+/**
+ * Get opening and closing balance report
+ */
+async function getBalanceReport1(filters = {}) {
+  try {
+    const {
+      startDate,
+      endDate,
+      centerId,
+      page = 1,
+      limit = 31 // Default to month view
+    } = filters;
+
+    const offset = (page - 1) * limit;
+
+    // Get all opening balances in date range
+    const openingBalancesWhere = {
+      date: {
+        [Op.between]: [startDate, endDate]
+      },
+      is_active: 1
+    };
+    if (centerId) {
+      openingBalancesWhere.office_center_id = centerId;
+    }
+
+    const openingBalances = await OpeningBalance.findAll({
+      where: openingBalancesWhere,
+      attributes: [
+        'opening_balance_id',
+        'date',
+        'office_center_id',
+        'opening_balance',
+        'notes'
+      ],
+      include: [
+        {
+          model: OfficeCenter,
+          as: 'officeCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        }
+      ],
+      order: [['date', 'ASC']]
+    });
+
+    // If no opening balances, create default for each day
+    const dates = [];
+    let currentDate = new Date(startDate);
+    const endDateTime = new Date(endDate);
+    
+    while (currentDate <= endDateTime) {
+      dates.push(currentDate.toISOString().split('T')[0]);
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    // Get daily transactions
+    const dailyData = [];
+    
+    for (const date of dates) {
+      const openingBal = openingBalances.find(ob => ob.date === date);
+      
+      // Get payments for this date
+      const payments = await Payment.sum('amount', {
+        where: {
+          payment_date: date,
+          is_active: 1,
+          status: 'completed',
+          ...(centerId && { collected_at_center: centerId })
+        }
+      });
+
+      // Get expenses for this date
+      const expenses = await ExpensePayment.sum('amount', {
+        where: {
+          payment_date: date,
+          is_active: 1,
+          ...(centerId && {
+            '$expense.office_center_id$': centerId
+          })
+        },
+        include: [
+          {
+            model: Expense,
+            as: 'expense',
+            attributes: []
+          }
+        ]
+      });
+
+      const openingAmount = parseFloat(openingBal?.opening_balance || 0);
+      const paymentTotal = parseFloat(payments || 0);
+      const expenseTotal = parseFloat(expenses || 0);
+      const netChange = paymentTotal - expenseTotal;
+      const closingAmount = openingAmount + netChange;
+
+      dailyData.push({
+        date,
+        center_id: centerId,
+        center_name: centerId ? openingBal?.officeCenter?.office_center_name : 'All Centers',
+        opening_balance: openingAmount.toFixed(2),
+        payments: paymentTotal.toFixed(2),
+        expenses: expenseTotal.toFixed(2),
+        net_change: netChange.toFixed(2),
+        closing_balance: closingAmount.toFixed(2),
+        has_opening_entry: !!openingBal
+      });
+    }
+
+    // Calculate summary
+    const totalOpening = dailyData.reduce((sum, d) => sum + parseFloat(d.opening_balance), 0);
+    const totalPayments = dailyData.reduce((sum, d) => sum + parseFloat(d.payments), 0);
+    const totalExpenses = dailyData.reduce((sum, d) => sum + parseFloat(d.expenses), 0);
+    const totalClosing = dailyData.reduce((sum, d) => sum + parseFloat(d.closing_balance), 0);
+
+    // Get paginated data
+    const paginatedData = dailyData.slice(offset, offset + limit);
+
+    return {
+      summary: {
+        total_opening: totalOpening.toFixed(2),
+        total_payments: totalPayments.toFixed(2),
+        total_expenses: totalExpenses.toFixed(2),
+        total_closing: totalClosing.toFixed(2),
+        net_profit_loss: (totalPayments - totalExpenses).toFixed(2),
+        days_covered: dailyData.length
+      },
+      daily_data: paginatedData,
+      pagination: {
+        current_page: page,
+        total_pages: Math.ceil(dailyData.length / limit),
+        total_records: dailyData.length,
+        limit
+      }
+    };
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+async function getBalanceReport(filters = {}) {
+  try {
+    const {
+      startDate,
+      endDate,
+      centerId,
+      page = 1,
+      limit = 31 // Default to month view
+    } = filters;
+
+    const offset = (page - 1) * limit;
+
+    // Get all opening balances in date range
+    const openingBalancesWhere = {
+      date: {
+        [Op.between]: [startDate, endDate]
+      },
+      is_active: 1
+    };
+    if (centerId) {
+      openingBalancesWhere.office_center_id = centerId;
+    }
+
+    const openingBalances = await OpeningBalance.findAll({
+      where: openingBalancesWhere,
+      attributes: [
+        'opening_balance_id',
+        'date',
+        'office_center_id',
+        'opening_balance',
+        'notes'
+      ],
+      include: [
+        {
+          model: OfficeCenter,
+          as: 'officeCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        }
+      ],
+      order: [['date', 'ASC']]
+    });
+
+    // If no opening balances, create default for each day
+    const dates = [];
+    let currentDate = new Date(startDate);
+    const endDateTime = new Date(endDate);
+    
+    while (currentDate <= endDateTime) {
+      dates.push(currentDate.toISOString().split('T')[0]);
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    // Get daily transactions
+    const dailyData = [];
+    
+    for (const date of dates) {
+      const openingBal = openingBalances.find(ob => ob.date === date);
+      
+      // Get payments for this date
+      const payments = await Payment.sum('amount', {
+        where: {
+          payment_date: date,
+          is_active: 1,
+          status: 'completed',
+          ...(centerId && { collected_at_center: centerId })
+        }
+      });
+
+      // FIXED: Get expenses for this date - use a different approach to avoid ambiguity
+      let expenseTotal = 0;
+      
+      if (centerId) {
+        // If center filter is applied, we need to join with Expense
+        const expensePayments = await ExpensePayment.findAll({
+          where: {
+            payment_date: date,
+            is_active: 1
+          },
+          attributes: ['amount'],
+          include: [
+            {
+              model: Expense,
+              as: 'expense',
+              where: { office_center_id: centerId, is_active: 1 },
+              attributes: [], // Don't fetch any attributes
+              required: true // INNER JOIN to ensure only matching records
+            }
+          ]
+        });
+        
+        expenseTotal = expensePayments.reduce((sum, ep) => sum + parseFloat(ep.amount || 0), 0);
+      } else {
+        // No center filter - simpler query
+        expenseTotal = await ExpensePayment.sum('amount', {
+          where: {
+            payment_date: date,
+            is_active: 1
+          }
+        }) || 0;
+      }
+
+      const openingAmount = parseFloat(openingBal?.opening_balance || 0);
+      const paymentTotal = parseFloat(payments || 0);
+      const expenseTotal_float = parseFloat(expenseTotal || 0);
+      const netChange = paymentTotal - expenseTotal_float;
+      const closingAmount = openingAmount + netChange;
+
+      dailyData.push({
+        date,
+        center_id: centerId,
+        center_name: centerId ? openingBal?.officeCenter?.office_center_name : 'All Centers',
+        opening_balance: openingAmount.toFixed(2),
+        payments: paymentTotal.toFixed(2),
+        expenses: expenseTotal_float.toFixed(2),
+        net_change: netChange.toFixed(2),
+        closing_balance: closingAmount.toFixed(2),
+        has_opening_entry: !!openingBal
+      });
+    }
+
+    // Calculate summary
+    const totalOpening = dailyData.reduce((sum, d) => sum + parseFloat(d.opening_balance), 0);
+    const totalPayments = dailyData.reduce((sum, d) => sum + parseFloat(d.payments), 0);
+    const totalExpenses = dailyData.reduce((sum, d) => sum + parseFloat(d.expenses), 0);
+    const totalClosing = dailyData.reduce((sum, d) => sum + parseFloat(d.closing_balance), 0);
+
+    // Get paginated data
+    const paginatedData = dailyData.slice(offset, offset + limit);
+
+    return {
+      summary: {
+        total_opening: totalOpening.toFixed(2),
+        total_payments: totalPayments.toFixed(2),
+        total_expenses: totalExpenses.toFixed(2),
+        total_closing: totalClosing.toFixed(2),
+        net_profit_loss: (totalPayments - totalExpenses).toFixed(2),
+        days_covered: dailyData.length
+      },
+      daily_data: paginatedData,
+      pagination: {
+        current_page: page,
+        total_pages: Math.ceil(dailyData.length / limit),
+        total_records: dailyData.length,
+        limit
+      }
+    };
+  } catch (error) {
+    console.error("Error in getBalanceReport:", error);
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+// =============================================
+// DASHBOARD STATISTICS
+// =============================================
+
+/**
+ * Get dashboard statistics
+ */
+async function getDashboardStats(centerId = null) {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    const monthStart = startOfMonth.toISOString().split('T')[0];
+    
+    const startOfWeek = new Date();
+    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+    const weekStart = startOfWeek.toISOString().split('T')[0];
+
+    // Common where conditions
+    const bookingWhere = { is_active: 1 };
+    const tripWhere = { is_active: 1 };
+    const paymentWhere = { is_active: 1, status: 'completed' };
+    
+    if (centerId) {
+      bookingWhere[Op.or] = [
+        { from_center_id: centerId },
+        { to_center_id: centerId }
+      ];
+      tripWhere[Op.or] = [
+        { from_center_id: centerId },
+        { to_center_id: centerId }
+      ];
+      paymentWhere.collected_at_center = centerId;
+    }
+
+    // Today's statistics
+    const todayBookings = await Booking.count({
+      where: {
+        ...bookingWhere,
+        booking_date: today
+      }
+    });
+
+    const todayTrips = await Trip.count({
+      where: {
+        ...tripWhere,
+        trip_date: today
+      }
+    });
+
+    const todayPayments = await Payment.sum('amount', {
+      where: {
+        ...paymentWhere,
+        payment_date: today
+      }
+    });
+
+    // Week statistics
+    const weekBookings = await Booking.count({
+      where: {
+        ...bookingWhere,
+        booking_date: {
+          [Op.between]: [weekStart, today]
+        }
+      }
+    });
+
+    const weekPayments = await Payment.sum('amount', {
+      where: {
+        ...paymentWhere,
+        payment_date: {
+          [Op.between]: [weekStart, today]
+        }
+      }
+    });
+
+    // Month statistics
+    const monthBookings = await Booking.count({
+      where: {
+        ...bookingWhere,
+        booking_date: {
+          [Op.between]: [monthStart, today]
+        }
+      }
+    });
+
+    const monthTrips = await Trip.count({
+      where: {
+        ...tripWhere,
+        trip_date: {
+          [Op.between]: [monthStart, today]
+        }
+      }
+    });
+
+    const monthPayments = await Payment.sum('amount', {
+      where: {
+        ...paymentWhere,
+        payment_date: {
+          [Op.between]: [monthStart, today]
+        }
+      }
+    });
+
+    // Status counts
+    const bookingStatus = await Booking.findAll({
+      where: bookingWhere,
+      attributes: [
+        'delivery_status',
+        [fn('COUNT', col('delivery_status')), 'count']
+      ],
+      group: ['delivery_status']
+    });
+
+    const tripStatus = await Trip.findAll({
+      where: tripWhere,
+      attributes: [
+        'status',
+        [fn('COUNT', col('status')), 'count']
+      ],
+      group: ['status']
+    });
+
+    // Upcoming trips
+    const upcomingTrips = await Trip.findAll({
+      where: {
+        ...tripWhere,
+        trip_date: {
+          [Op.gte]: today
+        },
+        status: 'scheduled'
+      },
+      attributes: [
+        'trip_id',
+        'trip_number',
+        'trip_date',
+        'from_center_id',
+        'to_center_id',
+        'total_packages'
+      ],
+      include: [
+        {
+          model: OfficeCenter,
+          as: 'fromCenter',
+          attributes: ['office_center_name']
+        },
+        {
+          model: OfficeCenter,
+          as: 'toCenter',
+          attributes: ['office_center_name']
+        }
+      ],
+      limit: 10,
+      order: [['trip_date', 'ASC']]
+    });
+
+    // Recent payments
+    const recentPayments = await Payment.findAll({
+      where: paymentWhere,
+      attributes: [
+        'payment_id',
+        'payment_number',
+        'amount',
+        'payment_date',
+        'payment_mode'
+      ],
+      include: [
+        {
+          model: Booking,
+          as: 'booking',
+          attributes: ['booking_number']
+        }
+      ],
+      limit: 10,
+      order: [['payment_date', 'DESC'], ['created_at', 'DESC']]
+    });
+
+    // Top customers
+    const topCustomers = await Booking.findAll({
+      where: bookingWhere,
+      attributes: [
+        'from_customer_id',
+        [fn('COUNT', col('booking_id')), 'booking_count'],
+        [fn('SUM', col('total_amount')), 'total_amount']
+      ],
+      include: [
+        {
+          model: Customer,
+          as: 'fromCustomer',
+          attributes: ['customer_name', 'customer_number']
+        }
+      ],
+      group: ['from_customer_id'],
+      order: [[literal('total_amount'), 'DESC']],
+      limit: 5
+    });
+
+    return {
+      date: today,
+      center_id: centerId,
+      center_name: centerId ? (await OfficeCenter.findByPk(centerId))?.office_center_name : 'All Centers',
+      today: {
+        bookings: todayBookings,
+        trips: todayTrips,
+        payments: parseFloat(todayPayments || 0).toFixed(2)
+      },
+      this_week: {
+        bookings: weekBookings,
+        payments: parseFloat(weekPayments || 0).toFixed(2)
+      },
+      this_month: {
+        bookings: monthBookings,
+        trips: monthTrips,
+        payments: parseFloat(monthPayments || 0).toFixed(2)
+      },
+      status_breakdown: {
+        bookings: bookingStatus.reduce((acc, curr) => {
+          acc[curr.delivery_status] = parseInt(curr.dataValues.count);
+          return acc;
+        }, {}),
+        trips: tripStatus.reduce((acc, curr) => {
+          acc[curr.status] = parseInt(curr.dataValues.count);
+          return acc;
+        }, {})
+      },
+      upcoming_trips: upcomingTrips,
+      recent_payments: recentPayments,
+      top_customers: topCustomers.map(c => ({
+        customer_id: c.from_customer_id,
+        customer_name: c.fromCustomer?.customer_name,
+        customer_number: c.fromCustomer?.customer_number,
+        booking_count: c.dataValues.booking_count,
+        total_amount: parseFloat(c.dataValues.total_amount || 0).toFixed(2)
+      }))
+    };
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
+module.exports = {
+  getDailyProfitLoss,
+  getDateRangeProfitLoss,
+  getPackageReport,
+  getTripReport,
+  getBalanceReport,
+  getDashboardStats
+};

@@ -10,6 +10,11 @@ module.exports = (sequelize, DataTypes) => {
     targetKey: 'trip_id',  // Important: use trip_id, not id
     as: 'trip'
   });
+    this.hasMany(models.PackageLoadman, {
+    foreignKey: 'trip_booking_id',
+    sourceKey: 'trip_booking_id',
+    as: 'packageLoadmen'
+  });
   
   this.belongsTo(models.Booking, {
     foreignKey: 'booking_id',

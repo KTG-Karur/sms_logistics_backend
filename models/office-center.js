@@ -33,7 +33,11 @@ module.exports = (sequelize, DataTypes) => {
     sourceKey: 'office_center_id',
     as: 'locations'
   });
-
+  this.hasMany(models.OpeningBalance, {
+    foreignKey: 'office_center_id',
+    sourceKey: 'office_center_id',
+    as: 'openingBalances'
+  });
       this.belongsTo(models.Employee, {
         foreignKey: "created_by",
         targetKey: "employee_id",
