@@ -25,7 +25,11 @@ module.exports = {
       office_center_id: {
         allowNull: false,
         type: Sequelize.STRING
-        // Removed foreign key constraint
+      },
+      in_out: {
+        allowNull: false,
+        type: Sequelize.ENUM('IN', 'OUT'),
+        defaultValue: 'IN'
       },
       opening_balance: {
         allowNull: false,
@@ -48,9 +52,13 @@ module.exports = {
       name: 'idx_opening_balance_office_center_id'
     });
 
-    // Add composite index for unique constraint per office center per date
-    await queryInterface.addIndex('opening_balance', ['date', 'office_center_id'], {
-      name: 'idx_opening_balance_date_office_center',
+    await queryInterface.addIndex('opening_balance', ['in_out'], {
+      name: 'idx_opening_balance_in_out'
+    });
+
+    // Add composite index for unique constraint per office center per date per in_out
+    await queryInterface.addIndex('opening_balance', ['date', 'office_center_id', 'in_out'], {
+      name: 'idx_opening_balance_date_office_in_out',
       unique: true
     });
   },

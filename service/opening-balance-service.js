@@ -1,4 +1,3 @@
-// service/opening-balance-service.js
 'use strict';
 
 const messages = require("../helpers/message");
@@ -18,6 +17,11 @@ async function getOpeningBalance(query, needIsActive = true) {
     // Filter by office_center_id if provided
     if (query.officeCenterId) {
       whereClause.office_center_id = query.officeCenterId;
+    }
+    
+    // Filter by in_out if provided
+    if (query.inOut) {
+      whereClause.in_out = query.inOut;
     }
     
     // Filter by date if provided
@@ -42,6 +46,7 @@ async function getOpeningBalance(query, needIsActive = true) {
         'opening_balance_id',
         'date',
         'office_center_id',
+        'in_out',
         'opening_balance',
         'notes',
         'is_active',
@@ -50,7 +55,7 @@ async function getOpeningBalance(query, needIsActive = true) {
         'created_by',
         'updated_by'
       ],
-      order: [['date', 'DESC'], ['created_at', 'DESC']]
+      order: [['date', 'DESC'], ['in_out', 'ASC'], ['created_at', 'DESC']]
     });
     
     return openingBalances;
@@ -65,19 +70,25 @@ async function createOpeningBalance(postData) {
   try {
     const executeMethod = _.mapKeys(postData, (value, key) => _.snakeCase(key));
     
-    // Check for duplicate opening balance for same office center and date
-    if (executeMethod.date && executeMethod.office_center_id) {
+    // Set default in_out if not provided
+    if (!executeMethod.in_out) {
+      executeMethod.in_out = 'IN';
+    }
+    
+    // Check for duplicate using the new unique constraint
+    if (executeMethod.date && executeMethod.office_center_id && executeMethod.in_out) {
       const existingBalance = await OpeningBalance.findOne({
         where: {
           date: executeMethod.date,
           office_center_id: executeMethod.office_center_id,
+          in_out: executeMethod.in_out,
           is_active: 1
         },
         transaction
       });
       
       if (existingBalance) {
-        throw new Error("Opening balance already exists for this date and office center");
+        throw new Error(`Opening balance already exists for date ${executeMethod.date}, office center ${executeMethod.office_center_id} and type ${executeMethod.in_out}`);
       }
     }
     
@@ -94,6 +105,7 @@ async function createOpeningBalance(postData) {
         'opening_balance_id',
         'date',
         'office_center_id',
+        'in_out',
         'opening_balance',
         'notes',
         'is_active',
@@ -115,13 +127,14 @@ async function updateOpeningBalance(openingBalanceId, putData) {
   try {
     const executeMethod = _.mapKeys(putData, (value, key) => _.snakeCase(key));
     
-    // Check for duplicate opening balance for same office center and date (excluding current record)
-    if (executeMethod.date || executeMethod.office_center_id) {
-      // Get current opening balance to know date and office_center_id if not provided in update
+    // Check for duplicate opening balance for same office center, date, and in_out (excluding current record)
+    if (executeMethod.date || executeMethod.office_center_id || executeMethod.in_out) {
+      // Get current opening balance to know date, office_center_id, and in_out if not provided in update
       let date = executeMethod.date;
       let officeCenterId = executeMethod.office_center_id;
+      let inOut = executeMethod.in_out;
       
-      if (!date || !officeCenterId) {
+      if (!date || !officeCenterId || !inOut) {
         const currentBalance = await OpeningBalance.findOne({
           where: { opening_balance_id: openingBalanceId },
           transaction
@@ -129,13 +142,15 @@ async function updateOpeningBalance(openingBalanceId, putData) {
         
         date = date || currentBalance?.date;
         officeCenterId = officeCenterId || currentBalance?.office_center_id;
+        inOut = inOut || currentBalance?.in_out;
       }
       
-      if (date && officeCenterId) {
+      if (date && officeCenterId && inOut) {
         const existingBalance = await OpeningBalance.findOne({
           where: {
             date: date,
             office_center_id: officeCenterId,
+            in_out: inOut,
             opening_balance_id: { [Op.ne]: openingBalanceId },
             is_active: 1
           },
@@ -143,7 +158,7 @@ async function updateOpeningBalance(openingBalanceId, putData) {
         });
         
         if (existingBalance) {
-          throw new Error("Opening balance already exists for this date and office center");
+          throw new Error(`Opening balance already exists for this date, office center, and ${inOut} type`);
         }
       }
     }
@@ -168,6 +183,7 @@ async function updateOpeningBalance(openingBalanceId, putData) {
         'opening_balance_id',
         'date',
         'office_center_id',
+        'in_out',
         'opening_balance',
         'notes',
         'is_active',
@@ -228,6 +244,11 @@ async function bulkCreateOpeningBalances(balancesData) {
       try {
         const executeMethod = _.mapKeys(balanceData, (value, key) => _.snakeCase(key));
 
+        // Set default in_out if not provided
+        if (!executeMethod.in_out) {
+          executeMethod.in_out = 'IN';
+        }
+
         // Validate required fields
         if (!executeMethod.date) {
           throw new Error("Date is required");
@@ -241,11 +262,16 @@ async function bulkCreateOpeningBalances(balancesData) {
           throw new Error("Opening balance is required");
         }
 
+        if (!['IN', 'OUT'].includes(executeMethod.in_out)) {
+          throw new Error("in_out must be either 'IN' or 'OUT'");
+        }
+
         // Check for duplicate
         const existingBalance = await OpeningBalance.findOne({
           where: {
             date: executeMethod.date,
             office_center_id: executeMethod.office_center_id,
+            in_out: executeMethod.in_out,
             is_active: 1
           },
           transaction
@@ -253,7 +279,7 @@ async function bulkCreateOpeningBalances(balancesData) {
 
         if (existingBalance) {
           throw new Error(
-            `Opening balance already exists for date ${executeMethod.date} and office center ${executeMethod.office_center_id}`
+            `Opening balance already exists for date ${executeMethod.date}, office center ${executeMethod.office_center_id}, and type ${executeMethod.in_out}`
           );
         }
 
@@ -265,6 +291,7 @@ async function bulkCreateOpeningBalances(balancesData) {
           opening_balance_id: balanceResult.opening_balance_id,
           date: balanceResult.date,
           office_center_id: balanceResult.office_center_id,
+          in_out: balanceResult.in_out,
           opening_balance: balanceResult.opening_balance,
           notes: balanceResult.notes,
           created_at: balanceResult.created_at,

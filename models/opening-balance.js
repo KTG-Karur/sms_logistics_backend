@@ -5,11 +5,7 @@ const { Model, UUIDV4 } = require("sequelize");
 
 module.exports = (sequelize, DataTypes) => {
   class OpeningBalance extends Model {
-    /**
-     * Helper method for defining associations.
-     */
     static associate(models) {
-      // Add association with OfficeCenter
       this.belongsTo(models.OfficeCenter, {
         foreignKey: 'office_center_id',
         targetKey: 'office_center_id',
@@ -17,7 +13,6 @@ module.exports = (sequelize, DataTypes) => {
         constraints: false
       });
 
-      // Keep employee associations
       this.belongsTo(models.Employee, {
         foreignKey: "created_by",
         targetKey: "employee_id",
@@ -64,6 +59,17 @@ module.exports = (sequelize, DataTypes) => {
         validate: {
           notEmpty: {
             msg: "Office center ID is required"
+          }
+        }
+      },
+      in_out: {
+        type: DataTypes.ENUM('IN', 'OUT'),
+        allowNull: false,
+        defaultValue: 'IN',
+        validate: {
+          isIn: {
+            args: [['IN', 'OUT']],
+            msg: "in_out must be either 'IN' or 'OUT'"
           }
         }
       },
@@ -126,8 +132,12 @@ module.exports = (sequelize, DataTypes) => {
           name: 'idx_opening_balance_office_center_id'
         },
         {
-          fields: ['date', 'office_center_id'],
-          name: 'idx_opening_balance_date_office_center',
+          fields: ['in_out'],
+          name: 'idx_opening_balance_in_out'
+        },
+        {
+          fields: ['date', 'office_center_id', 'in_out'],
+          name: 'idx_opening_balance_date_office_in_out',
           unique: true
         }
       ]

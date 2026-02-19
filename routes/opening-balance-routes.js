@@ -25,6 +25,15 @@ const schema = {
       stringEmpty: "Office center ID is required"
     }
   },
+  inOut: {
+    type: "string",
+    enum: ["IN", "OUT"],
+    optional: false,
+    default: "IN",
+    messages: {
+      stringEnum: "inOut must be either 'IN' or 'OUT'"
+    }
+  },
   openingBalance: {
     type: "number",
     positive: true,
@@ -59,6 +68,12 @@ const bulkSchema = {
         officeCenterId: {
           type: "string",
           optional: false
+        },
+        inOut: {
+          type: "string",
+          enum: ["IN", "OUT"],
+          optional: false,
+          default: "IN"
         },
         openingBalance: {
           type: "number",
