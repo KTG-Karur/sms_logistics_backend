@@ -134,7 +134,16 @@ async function getDailyProfitLoss(date, centerId = null) {
     return {
       date: reportDate,
       center_id: centerId,
-      center_name: centerId ? (await OfficeCenter.findByPk(centerId))?.office_center_name : 'All Centers',
+      center_name: centerId ? (await OfficeCenter.findOne({
+      where: { office_center_id:centerId},
+      attributes: [
+        'office_center_id',
+        'office_center_name',
+        'is_active',
+        'created_at',
+        'updated_at'
+      ]
+    }))?.office_center_name : 'All Centers',
       opening_balance: openingAmount.toFixed(2),
       summary: {
         total_payments: payments.length,
@@ -171,10 +180,10 @@ async function getDailyProfitLoss(date, centerId = null) {
  * Get date range profit & loss report
  */
 
-async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
+async function getDateRangeProfitLoss1(startDate, endDate, centerId = null) {
   try {
     // Get opening balance for start date
-    const openingBalance = await OpeningBalance.findOne({
+    const openingBalance = await OpeningBalance.findAll({
       where: {
         date: startDate,
         ...(centerId && { office_center_id: centerId }),
@@ -375,7 +384,16 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
         end_date: endDate
       },
       center_id: centerId,
-      center_name: centerId ? (await OfficeCenter.findByPk(centerId))?.office_center_name : 'All Centers',
+      center_name: centerId ? (await OfficeCenter.findOne({
+      where: { office_center_id:centerId},
+      attributes: [
+        'office_center_id',
+        'office_center_name',
+        'is_active',
+        'created_at',
+        'updated_at'
+      ]
+    }))?.office_center_name : 'All Centers',
       opening_balance: parseFloat(openingBalance?.opening_balance || 0).toFixed(2),
       summary: {
         total_payments: payments.length,
@@ -426,6 +444,1232 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
         description: ep.expense?.description,
         notes: ep.notes
       }))
+    };
+  } catch (error) {
+    console.error("Error in getDateRangeProfitLoss:", error);
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
+async function getDateRangeProfitLoss1(startDate, endDate, centerId = null) {
+  try {
+    // ===== GET OPENING BALANCE FOR START DATE (considering IN/OUT) =====
+    const previousDay = new Date(startDate);
+    previousDay.setDate(previousDay.getDate() - 1);
+    const previousDayStr = previousDay.toISOString().split('T')[0];
+    
+    let openingBalanceData = { total: 0, net_investment: 0 };
+    let centerWiseOpening = [];
+    let runningBalance = 0;
+    let totalInvestment = 0;
+    
+    if (centerId) {
+      // Specific center - get all opening balance transactions on or before previous day
+      const allTransactions = await OpeningBalance.findAll({
+        where: {
+          date: {
+            [Op.lte]: previousDayStr
+          },
+          office_center_id: centerId,
+          is_active: 1
+        },
+        order: [['date', 'ASC']],
+        include: [
+          {
+            model: OfficeCenter,
+            as: 'officeCenter',
+            attributes: ['office_center_id', 'office_center_name']
+          }
+        ]
+      });
+      
+      // Calculate net balance from all IN/OUT transactions
+      let netBalance = 0;
+      allTransactions.forEach(trans => {
+        if (trans.in_out === 'IN') {
+          netBalance += parseFloat(trans.opening_balance || 0);
+        } else {
+          netBalance -= parseFloat(trans.opening_balance || 0);
+        }
+      });
+      
+      // Get the latest transaction for metadata
+      const lastTransaction = allTransactions[allTransactions.length - 1];
+      
+      openingBalanceData = {
+        total: netBalance,
+        net_investment: netBalance,
+        last_updated: lastTransaction?.date,
+        center_id: centerId,
+        center_name: lastTransaction?.officeCenter?.office_center_name,
+        transaction_count: allTransactions.length
+      };
+      
+      runningBalance = netBalance;
+      totalInvestment = netBalance;
+    } else {
+      // All centers - get all opening balance transactions for each center
+      const allCenters = await OfficeCenter.findAll({
+        where: { is_active: 1 },
+        attributes: ['office_center_id', 'office_center_name']
+      });
+      
+      let totalNetBalance = 0;
+      
+      for (const center of allCenters) {
+        const centerTransactions = await OpeningBalance.findAll({
+          where: {
+            date: {
+              [Op.lte]: previousDayStr
+            },
+            office_center_id: center.office_center_id,
+            is_active: 1
+          },
+          order: [['date', 'ASC']]
+        });
+        
+        let centerNetBalance = 0;
+        centerTransactions.forEach(trans => {
+          if (trans.in_out === 'IN') {
+            centerNetBalance += parseFloat(trans.opening_balance || 0);
+          } else {
+            centerNetBalance -= parseFloat(trans.opening_balance || 0);
+          }
+        });
+        
+        totalNetBalance += centerNetBalance;
+        
+        centerWiseOpening.push({
+          center_id: center.office_center_id,
+          center_name: center.office_center_name,
+          opening_balance: centerNetBalance.toFixed(2),
+          transaction_count: centerTransactions.length,
+          last_updated: centerTransactions[centerTransactions.length - 1]?.date
+        });
+      }
+      
+      openingBalanceData = {
+        total: totalNetBalance,
+        net_investment: totalNetBalance,
+        as_of_date: previousDayStr
+      };
+      
+      runningBalance = totalNetBalance;
+      totalInvestment = totalNetBalance;
+    }
+
+    // Get all payments in date range with customer details
+    const paymentsWhere = {
+      payment_date: {
+        [Op.between]: [startDate, endDate]
+      },
+      is_active: 1,
+      status: 'completed'
+    };
+    
+    if (centerId) {
+      paymentsWhere.collected_at_center = centerId;
+    }
+
+    const payments = await Payment.findAll({
+      where: paymentsWhere,
+      attributes: [
+        'payment_id',
+        'payment_number',
+        [sequelize.col('Payment.amount'), 'amount'],
+        'payment_date',
+        'payment_mode',
+        'payment_type',
+        'booking_id',
+        'customer_id',
+        'description',
+        'collected_at_center'
+      ],
+      include: [
+        {
+          model: Customer,
+          as: 'customer',
+          attributes: ['customer_id', 'customer_name', 'customer_number']
+        },
+        {
+          model: Booking,
+          as: 'booking',
+          attributes: ['booking_id', 'booking_number', 'total_amount', 'due_amount'],
+          include: [
+            {
+              model: Customer,
+              as: 'fromCustomer',
+              attributes: ['customer_id', 'customer_name', 'customer_number']
+            },
+            {
+              model: Customer,
+              as: 'toCustomer',
+              attributes: ['customer_id', 'customer_name', 'customer_number']
+            }
+          ]
+        },
+        {
+          model: Employee,
+          as: 'collector',
+          attributes: ['employee_id', 'employee_name']
+        },
+        {
+          model: OfficeCenter,
+          as: 'collectionCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        }
+      ],
+      order: [['payment_date', 'ASC']]
+    });
+
+    // Get all expense payments in date range
+    const expensePaymentsWhere = {
+      payment_date: {
+        [Op.between]: [startDate, endDate]
+      },
+      is_active: 1
+    };
+
+    const expensePayments = await ExpensePayment.findAll({
+      where: expensePaymentsWhere,
+      attributes: [
+        'expense_payment_id',
+        [sequelize.col('ExpensePayment.amount'), 'amount'],
+        'payment_date',
+        'payment_type',
+        'notes'
+      ],
+      include: [
+        {
+          model: Expense,
+          as: 'expense',
+          attributes: ['expense_id', 'description', 'expense_type_id', 'office_center_id'],
+          where: centerId ? { office_center_id: centerId } : {},
+          include: [
+            {
+              model: sequelize.models.expence_type,
+              as: 'expenseType',
+              attributes: ['expence_type_id', 'expence_type_name']
+            },
+            {
+              model: OfficeCenter,
+              as: 'officeCenter',
+              attributes: ['office_center_id', 'office_center_name']
+            }
+          ]
+        }
+      ],
+      order: [['payment_date', 'ASC']]
+    });
+
+    // Get opening balance transactions within the date range (for tracking investments/withdrawals)
+    const openingTransactionsWhere = {
+      date: {
+        [Op.between]: [startDate, endDate]
+      },
+      is_active: 1
+    };
+    if (centerId) {
+      openingTransactionsWhere.office_center_id = centerId;
+    }
+    
+    const openingTransactions = await OpeningBalance.findAll({
+      where: openingTransactionsWhere,
+      attributes: [
+        'opening_balance_id',
+        'date',
+        'office_center_id',
+        'in_out',
+        'opening_balance',
+        'notes'
+      ],
+      include: [
+        {
+          model: OfficeCenter,
+          as: 'officeCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        }
+      ],
+      order: [['date', 'ASC']]
+    });
+
+    // Group by date with running balance calculation
+    const allDates = [...new Set([
+      ...payments.map(p => p.payment_date),
+      ...expensePayments.map(ep => ep.payment_date),
+      ...openingTransactions.map(ot => ot.date)
+    ])].sort();
+
+    const dailyBreakdown = {};
+    let currentRunningBalance = runningBalance;
+    let totalInvestments = 0;
+    let totalWithdrawals = 0;
+
+    for (const date of allDates) {
+      const dayPayments = payments.filter(p => p.payment_date === date);
+      const dayExpenses = expensePayments.filter(ep => ep.payment_date === date);
+      const dayOpeningTrans = openingTransactions.filter(ot => ot.date === date);
+      
+      const dayPaymentTotal = dayPayments.reduce((sum, p) => sum + parseFloat(p.getDataValue('amount') || 0), 0);
+      const dayExpenseTotal = dayExpenses.reduce((sum, ep) => sum + parseFloat(ep.getDataValue('amount') || 0), 0);
+      
+      // Calculate opening balance adjustments (IN/OUT)
+      let dayInvestmentTotal = 0;
+      let dayWithdrawalTotal = 0;
+      const dayInvestments = [];
+      const dayWithdrawals = [];
+      
+      dayOpeningTrans.forEach(trans => {
+        const amount = parseFloat(trans.opening_balance || 0);
+        if (trans.in_out === 'IN') {
+          dayInvestmentTotal += amount;
+          dayInvestments.push({
+            id: trans.opening_balance_id,
+            amount: amount,
+            notes: trans.notes
+          });
+        } else {
+          dayWithdrawalTotal += amount;
+          dayWithdrawals.push({
+            id: trans.opening_balance_id,
+            amount: amount,
+            notes: trans.notes
+          });
+        }
+      });
+      
+      totalInvestments += dayInvestmentTotal;
+      totalWithdrawals += dayWithdrawalTotal;
+      
+      // Net change = payments - expenses + investments - withdrawals
+      const dayNet = dayPaymentTotal - dayExpenseTotal + dayInvestmentTotal - dayWithdrawalTotal;
+      const dayOpeningBalance = currentRunningBalance;
+      const dayClosingBalance = dayOpeningBalance + dayNet;
+      
+      dailyBreakdown[date] = {
+        date,
+        opening_balance: dayOpeningBalance.toFixed(2),
+        payments: dayPayments.length,
+        payment_total: dayPaymentTotal.toFixed(2),
+        expenses: dayExpenses.length,
+        expense_total: dayExpenseTotal.toFixed(2),
+        investments: dayInvestments.length,
+        investment_total: dayInvestmentTotal.toFixed(2),
+        withdrawals: dayWithdrawals.length,
+        withdrawal_total: dayWithdrawalTotal.toFixed(2),
+        net_change: dayNet.toFixed(2),
+        closing_balance: dayClosingBalance.toFixed(2),
+        investment_details: dayInvestments,
+        withdrawal_details: dayWithdrawals
+      };
+      
+      // Update running balance for next day
+      currentRunningBalance = dayClosingBalance;
+    }
+
+    // Calculate totals
+    const totalPayments = payments.reduce((sum, p) => sum + parseFloat(p.getDataValue('amount') || 0), 0);
+    const totalExpenses = expensePayments.reduce((sum, ep) => sum + parseFloat(ep.getDataValue('amount') || 0), 0);
+    const operationalProfitLoss = totalPayments - totalExpenses;
+    const netInvestmentChange = totalInvestments - totalWithdrawals;
+    const totalProfitLoss = operationalProfitLoss + netInvestmentChange;
+    const finalClosingBalance = runningBalance + totalProfitLoss;
+
+    // Group by expense type
+    const expenseByType = {};
+    expensePayments.forEach(ep => {
+      const typeName = ep.expense?.expenseType?.expence_type_name || 'Other';
+      if (!expenseByType[typeName]) {
+        expenseByType[typeName] = {
+          type: typeName,
+          total: 0,
+          count: 0
+        };
+      }
+      expenseByType[typeName].total += parseFloat(ep.getDataValue('amount') || 0);
+      expenseByType[typeName].count += 1;
+    });
+
+    // Group payments by mode
+    const paymentsByMode = {};
+    payments.forEach(p => {
+      const mode = p.payment_mode || 'other';
+      if (!paymentsByMode[mode]) {
+        paymentsByMode[mode] = {
+          mode,
+          total: 0,
+          count: 0
+        };
+      }
+      paymentsByMode[mode].total += parseFloat(p.getDataValue('amount') || 0);
+      paymentsByMode[mode].count += 1;
+    });
+
+    // Group payments by customer
+    const paymentsByCustomer = {};
+    payments.forEach(p => {
+      const customerId = p.customer?.customer_id || 'unknown';
+      const customerName = p.customer?.customer_name || 'Unknown Customer';
+      
+      if (!paymentsByCustomer[customerId]) {
+        paymentsByCustomer[customerId] = {
+          customer_id: customerId,
+          customer_name: customerName,
+          customer_number: p.customer?.customer_number,
+          total_amount: 0,
+          payment_count: 0,
+          payments: []
+        };
+      }
+      
+      const amount = parseFloat(p.getDataValue('amount') || 0);
+      paymentsByCustomer[customerId].total_amount += amount;
+      paymentsByCustomer[customerId].payment_count += 1;
+      paymentsByCustomer[customerId].payments.push({
+        payment_id: p.payment_id,
+        payment_number: p.payment_number,
+        amount: amount,
+        date: p.payment_date,
+        mode: p.payment_mode,
+        booking_number: p.booking?.booking_number
+      });
+    });
+
+    // Group payments by center
+    const paymentsByCenter = {};
+    payments.forEach(p => {
+      const centerId = p.collected_at_center || 'unknown';
+      const centerName = p.collectionCenter?.office_center_name || 'Unknown Center';
+      
+      if (!paymentsByCenter[centerId]) {
+        paymentsByCenter[centerId] = {
+          center_id: centerId,
+          center_name: centerName,
+          total_amount: 0,
+          payment_count: 0
+        };
+      }
+      
+      paymentsByCenter[centerId].total_amount += parseFloat(p.getDataValue('amount') || 0);
+      paymentsByCenter[centerId].payment_count += 1;
+    });
+
+    // Group investments/withdrawals by center
+    const investmentsByCenter = {};
+    openingTransactions.forEach(ot => {
+      const cId = ot.office_center_id;
+      const centerName = ot.officeCenter?.office_center_name || 'Unknown Center';
+      
+      if (!investmentsByCenter[cId]) {
+        investmentsByCenter[cId] = {
+          center_id: cId,
+          center_name: centerName,
+          total_investments: 0,
+          total_withdrawals: 0,
+          net_investment: 0,
+          transactions: []
+        };
+      }
+      
+      const amount = parseFloat(ot.opening_balance || 0);
+      if (ot.in_out === 'IN') {
+        investmentsByCenter[cId].total_investments += amount;
+        investmentsByCenter[cId].net_investment += amount;
+      } else {
+        investmentsByCenter[cId].total_withdrawals += amount;
+        investmentsByCenter[cId].net_investment -= amount;
+      }
+      
+      investmentsByCenter[cId].transactions.push({
+        id: ot.opening_balance_id,
+        date: ot.date,
+        type: ot.in_out,
+        amount: amount,
+        notes: ot.notes
+      });
+    });
+
+    // Get center name for response
+    let centerName = 'All Centers';
+    if (centerId) {
+      const center = await OfficeCenter.findOne({ 
+        where: { office_center_id: centerId }, 
+        attributes: ['office_center_id', 'office_center_name'] 
+      });
+      centerName = center?.office_center_name || 'Unknown Center';
+    }
+
+    return {
+      date_range: {
+        start_date: startDate,
+        end_date: endDate,
+        opening_balance_as_of: previousDayStr
+      },
+      center: {
+        id: centerId,
+        name: centerName
+      },
+      opening_balance: {
+        total: openingBalanceData.total.toFixed(2),
+        net_investment: openingBalanceData.net_investment.toFixed(2),
+        as_of_date: previousDayStr,
+        ...(centerId ? { 
+          center_id: centerId, 
+          center_name: centerName, 
+          last_updated: openingBalanceData.last_updated,
+          transaction_count: openingBalanceData.transaction_count
+        } : { 
+          center_wise: centerWiseOpening 
+        })
+      },
+      summary: {
+        total_payments: payments.length,
+        total_payment_amount: totalPayments.toFixed(2),
+        total_expense_payments: expensePayments.length,
+        total_expense_amount: totalExpenses.toFixed(2),
+        operational_profit_loss: operationalProfitLoss.toFixed(2),
+        total_investments: totalInvestments.toFixed(2),
+        total_withdrawals: totalWithdrawals.toFixed(2),
+        net_investment_change: netInvestmentChange.toFixed(2),
+        total_profit_loss: totalProfitLoss.toFixed(2),
+        profit_loss_status: totalProfitLoss >= 0 ? 'profit' : 'loss',
+        closing_balance: finalClosingBalance.toFixed(2),
+        closing_balance_as_of: endDate,
+        unique_customers: Object.keys(paymentsByCustomer).length,
+        centers_involved: Object.keys(paymentsByCenter).length,
+        days_in_range: allDates.length
+      },
+      breakdown: {
+        daily: Object.values(dailyBreakdown),
+        by_payment_mode: Object.values(paymentsByMode),
+        by_expense_type: Object.values(expenseByType),
+        by_customer: Object.values(paymentsByCustomer),
+        by_center: Object.values(paymentsByCenter),
+        by_investment_center: Object.values(investmentsByCenter)
+      },
+      transactions: {
+        payments: payments.map(p => ({
+          payment_id: p.payment_id,
+          payment_number: p.payment_number,
+          date: p.payment_date,
+          amount: p.getDataValue('amount'),
+          mode: p.payment_mode,
+          type: p.payment_type,
+          description: p.description,
+          center: p.collectionCenter ? {
+            id: p.collectionCenter.office_center_id,
+            name: p.collectionCenter.office_center_name
+          } : null,
+          customer: p.customer ? {
+            id: p.customer.customer_id,
+            name: p.customer.customer_name,
+            number: p.customer.customer_number
+          } : null,
+          booking: p.booking ? {
+            id: p.booking.booking_id,
+            number: p.booking.booking_number,
+            total_amount: p.booking.total_amount,
+            due_amount: p.booking.due_amount
+          } : null,
+          collector: p.collector ? {
+            id: p.collector.employee_id,
+            name: p.collector.employee_name
+          } : null
+        })),
+        expenses: expensePayments.map(ep => ({
+          expense_payment_id: ep.expense_payment_id,
+          date: ep.payment_date,
+          type: ep.expense?.expenseType?.expence_type_name,
+          amount: ep.getDataValue('amount'),
+          description: ep.expense?.description,
+          notes: ep.notes,
+          payment_type: ep.payment_type,
+          center: ep.expense?.officeCenter ? {
+            id: ep.expense.officeCenter.office_center_id,
+            name: ep.expense.officeCenter.office_center_name
+          } : null
+        })),
+        investments: openingTransactions.map(ot => ({
+          id: ot.opening_balance_id,
+          date: ot.date,
+          type: ot.in_out,
+          amount: ot.opening_balance,
+          notes: ot.notes,
+          center: ot.officeCenter ? {
+            id: ot.officeCenter.office_center_id,
+            name: ot.officeCenter.office_center_name
+          } : null
+        }))
+      }
+    };
+  } catch (error) {
+    console.error("Error in getDateRangeProfitLoss:", error);
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
+async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
+  try {
+    // ===== GET OPENING BALANCE FOR START DATE (considering IN/OUT) =====
+    const previousDay = new Date(startDate);
+    previousDay.setDate(previousDay.getDate() - 1);
+    const previousDayStr = previousDay.toISOString().split('T')[0];
+    
+    let openingBalanceData = { total: 0, net_investment: 0 };
+    let centerWiseOpening = [];
+    let runningBalance = 0;
+    let totalInvestment = 0;
+    
+    if (centerId) {
+      // Specific center - get all opening balance transactions on or before previous day
+      const allTransactions = await OpeningBalance.findAll({
+        where: {
+          date: {
+            [Op.lte]: previousDayStr
+          },
+          office_center_id: centerId,
+          is_active: 1
+        },
+        order: [['date', 'ASC']],
+        include: [
+          {
+            model: OfficeCenter,
+            as: 'officeCenter',
+            attributes: ['office_center_id', 'office_center_name']
+          }
+        ]
+      });
+      
+      // Calculate net balance from all IN/OUT transactions
+      let netBalance = 0;
+      allTransactions.forEach(trans => {
+        if (trans.in_out === 'IN') {
+          netBalance += parseFloat(trans.opening_balance || 0);
+        } else {
+          netBalance -= parseFloat(trans.opening_balance || 0);
+        }
+      });
+      
+      // Get the latest transaction for metadata
+      const lastTransaction = allTransactions[allTransactions.length - 1];
+      
+      openingBalanceData = {
+        total: netBalance,
+        net_investment: netBalance,
+        last_updated: lastTransaction?.date,
+        center_id: centerId,
+        center_name: lastTransaction?.officeCenter?.office_center_name,
+        transaction_count: allTransactions.length
+      };
+      
+      runningBalance = netBalance;
+      totalInvestment = netBalance;
+    } else {
+      // All centers - get all opening balance transactions for each center
+      const allCenters = await OfficeCenter.findAll({
+        where: { is_active: 1 },
+        attributes: ['office_center_id', 'office_center_name']
+      });
+      
+      let totalNetBalance = 0;
+      
+      for (const center of allCenters) {
+        const centerTransactions = await OpeningBalance.findAll({
+          where: {
+            date: {
+              [Op.lte]: previousDayStr
+            },
+            office_center_id: center.office_center_id,
+            is_active: 1
+          },
+          order: [['date', 'ASC']]
+        });
+        
+        let centerNetBalance = 0;
+        centerTransactions.forEach(trans => {
+          if (trans.in_out === 'IN') {
+            centerNetBalance += parseFloat(trans.opening_balance || 0);
+          } else {
+            centerNetBalance -= parseFloat(trans.opening_balance || 0);
+          }
+        });
+        
+        totalNetBalance += centerNetBalance;
+        
+        centerWiseOpening.push({
+          center_id: center.office_center_id,
+          center_name: center.office_center_name,
+          opening_balance: centerNetBalance.toFixed(2),
+          transaction_count: centerTransactions.length,
+          last_updated: centerTransactions[centerTransactions.length - 1]?.date
+        });
+      }
+      
+      openingBalanceData = {
+        total: totalNetBalance,
+        net_investment: totalNetBalance,
+        as_of_date: previousDayStr
+      };
+      
+      runningBalance = totalNetBalance;
+      totalInvestment = totalNetBalance;
+    }
+
+    // ===== FIXED: Get all payments in date range - filter by booking's from_center_id =====
+    // First, get all bookings that match the center filter
+    const bookingWhere = {
+      booking_date: {
+        [Op.between]: [startDate, endDate]
+      },
+      is_active: 1
+    };
+    
+    if (centerId) {
+      bookingWhere.from_center_id = centerId; // Filter by booking's origin center
+    }
+    
+    const relevantBookings = await Booking.findAll({
+      where: bookingWhere,
+      attributes: ['booking_id']
+    });
+    
+    const bookingIds = relevantBookings.map(b => b.booking_id);
+    
+    // Get payments for these bookings
+    const paymentsWhere = {
+      payment_date: {
+        [Op.between]: [startDate, endDate]
+      },
+      is_active: 1,
+      status: 'completed'
+    };
+    
+    if (bookingIds.length > 0) {
+      paymentsWhere.booking_id = { [Op.in]: bookingIds };
+    } else if (centerId) {
+      // No bookings found for this center, return empty result
+      return {
+        date_range: {
+          start_date: startDate,
+          end_date: endDate,
+          opening_balance_as_of: previousDayStr
+        },
+        center: {
+          id: centerId,
+          name: centerName
+        },
+        opening_balance: {
+          total: openingBalanceData.total.toFixed(2),
+          net_investment: openingBalanceData.net_investment.toFixed(2),
+          as_of_date: previousDayStr,
+          ...(centerId ? { 
+            center_id: centerId, 
+            center_name: centerName, 
+            last_updated: openingBalanceData.last_updated,
+            transaction_count: openingBalanceData.transaction_count
+          } : { 
+            center_wise: centerWiseOpening 
+          })
+        },
+        summary: {
+          total_payments: 0,
+          total_payment_amount: "0.00",
+          total_expense_payments: 0,
+          total_expense_amount: "0.00",
+          operational_profit_loss: "0.00",
+          total_investments: "0.00",
+          total_withdrawals: "0.00",
+          net_investment_change: "0.00",
+          total_profit_loss: "0.00",
+          profit_loss_status: 'profit',
+          closing_balance: openingBalanceData.total.toFixed(2),
+          closing_balance_as_of: endDate,
+          unique_customers: 0,
+          centers_involved: 0,
+          days_in_range: 0
+        },
+        breakdown: {
+          daily: [],
+          by_payment_mode: [],
+          by_expense_type: [],
+          by_customer: [],
+          by_center: [],
+          by_investment_center: Object.values(investmentsByCenter)
+        },
+        transactions: {
+          payments: [],
+          expenses: [],
+          investments: openingTransactions.map(ot => ({
+            id: ot.opening_balance_id,
+            date: ot.date,
+            type: ot.in_out,
+            amount: ot.opening_balance,
+            notes: ot.notes,
+            center: ot.officeCenter ? {
+              id: ot.officeCenter.office_center_id,
+              name: ot.officeCenter.office_center_name
+            } : null
+          }))
+        }
+      };
+    }
+
+    const payments = await Payment.findAll({
+      where: paymentsWhere,
+      attributes: [
+        'payment_id',
+        'payment_number',
+        [sequelize.col('Payment.amount'), 'amount'],
+        'payment_date',
+        'payment_mode',
+        'payment_type',
+        'booking_id',
+        'customer_id',
+        'description',
+        'collected_at_center'
+      ],
+      include: [
+        {
+          model: Customer,
+          as: 'customer',
+          attributes: ['customer_id', 'customer_name', 'customer_number']
+        },
+        {
+          model: Booking,
+          as: 'booking',
+          attributes: ['booking_id', 'booking_number', 'total_amount', 'due_amount', 'from_center_id', 'to_center_id'],
+          include: [
+            {
+              model: Customer,
+              as: 'fromCustomer',
+              attributes: ['customer_id', 'customer_name', 'customer_number']
+            },
+            {
+              model: Customer,
+              as: 'toCustomer',
+              attributes: ['customer_id', 'customer_name', 'customer_number']
+            },
+            {
+              model: OfficeCenter,
+              as: 'fromCenter',
+              attributes: ['office_center_id', 'office_center_name']
+            },
+            {
+              model: OfficeCenter,
+              as: 'toCenter',
+              attributes: ['office_center_id', 'office_center_name']
+            }
+          ]
+        },
+        {
+          model: Employee,
+          as: 'collector',
+          attributes: ['employee_id', 'employee_name']
+        },
+        {
+          model: OfficeCenter,
+          as: 'collectionCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        }
+      ],
+      order: [['payment_date', 'ASC']]
+    });
+
+    // ===== FIXED: Get all expense payments - filter by expense's office_center_id =====
+    const expensePaymentsWhere = {
+      payment_date: {
+        [Op.between]: [startDate, endDate]
+      },
+      is_active: 1
+    };
+
+    const expensePayments = await ExpensePayment.findAll({
+      where: expensePaymentsWhere,
+      attributes: [
+        'expense_payment_id',
+        [sequelize.col('ExpensePayment.amount'), 'amount'],
+        'payment_date',
+        'payment_type',
+        'notes'
+      ],
+      include: [
+        {
+          model: Expense,
+          as: 'expense',
+          attributes: ['expense_id', 'description', 'expense_type_id', 'office_center_id'],
+          where: centerId ? { office_center_id: centerId } : {},
+          required: centerId ? true : false, // Only require if filtering by center
+          include: [
+            {
+              model: sequelize.models.expence_type,
+              as: 'expenseType',
+              attributes: ['expence_type_id', 'expence_type_name']
+            },
+            {
+              model: OfficeCenter,
+              as: 'officeCenter',
+              attributes: ['office_center_id', 'office_center_name']
+            }
+          ]
+        }
+      ],
+      order: [['payment_date', 'ASC']]
+    });
+
+    // Get opening balance transactions within the date range (for tracking investments/withdrawals)
+    const openingTransactionsWhere = {
+      date: {
+        [Op.between]: [startDate, endDate]
+      },
+      is_active: 1
+    };
+    if (centerId) {
+      openingTransactionsWhere.office_center_id = centerId;
+    }
+    
+    const openingTransactions = await OpeningBalance.findAll({
+      where: openingTransactionsWhere,
+      attributes: [
+        'opening_balance_id',
+        'date',
+        'office_center_id',
+        'in_out',
+        'opening_balance',
+        'notes'
+      ],
+      include: [
+        {
+          model: OfficeCenter,
+          as: 'officeCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        }
+      ],
+      order: [['date', 'ASC']]
+    });
+
+    // Group by date with running balance calculation
+    const allDates = [...new Set([
+      ...payments.map(p => p.payment_date),
+      ...expensePayments.map(ep => ep.payment_date),
+      ...openingTransactions.map(ot => ot.date)
+    ])].sort();
+
+    const dailyBreakdown = {};
+    let currentRunningBalance = runningBalance;
+    let totalInvestments = 0;
+    let totalWithdrawals = 0;
+
+    for (const date of allDates) {
+      const dayPayments = payments.filter(p => p.payment_date === date);
+      const dayExpenses = expensePayments.filter(ep => ep.payment_date === date);
+      const dayOpeningTrans = openingTransactions.filter(ot => ot.date === date);
+      
+      const dayPaymentTotal = dayPayments.reduce((sum, p) => sum + parseFloat(p.getDataValue('amount') || 0), 0);
+      const dayExpenseTotal = dayExpenses.reduce((sum, ep) => sum + parseFloat(ep.getDataValue('amount') || 0), 0);
+      
+      // Calculate opening balance adjustments (IN/OUT)
+      let dayInvestmentTotal = 0;
+      let dayWithdrawalTotal = 0;
+      const dayInvestments = [];
+      const dayWithdrawals = [];
+      
+      dayOpeningTrans.forEach(trans => {
+        const amount = parseFloat(trans.opening_balance || 0);
+        if (trans.in_out === 'IN') {
+          dayInvestmentTotal += amount;
+          dayInvestments.push({
+            id: trans.opening_balance_id,
+            amount: amount,
+            notes: trans.notes
+          });
+        } else {
+          dayWithdrawalTotal += amount;
+          dayWithdrawals.push({
+            id: trans.opening_balance_id,
+            amount: amount,
+            notes: trans.notes
+          });
+        }
+      });
+      
+      totalInvestments += dayInvestmentTotal;
+      totalWithdrawals += dayWithdrawalTotal;
+      
+      // Net change = payments - expenses + investments - withdrawals
+      const dayNet = dayPaymentTotal - dayExpenseTotal + dayInvestmentTotal - dayWithdrawalTotal;
+      const dayOpeningBalance = currentRunningBalance;
+      const dayClosingBalance = dayOpeningBalance + dayNet;
+      
+      dailyBreakdown[date] = {
+        date,
+        opening_balance: dayOpeningBalance.toFixed(2),
+        payments: dayPayments.length,
+        payment_total: dayPaymentTotal.toFixed(2),
+        expenses: dayExpenses.length,
+        expense_total: dayExpenseTotal.toFixed(2),
+        investments: dayInvestments.length,
+        investment_total: dayInvestmentTotal.toFixed(2),
+        withdrawals: dayWithdrawals.length,
+        withdrawal_total: dayWithdrawalTotal.toFixed(2),
+        net_change: dayNet.toFixed(2),
+        closing_balance: dayClosingBalance.toFixed(2),
+        investment_details: dayInvestments,
+        withdrawal_details: dayWithdrawals
+      };
+      
+      // Update running balance for next day
+      currentRunningBalance = dayClosingBalance;
+    }
+
+    // Calculate totals
+    const totalPayments = payments.reduce((sum, p) => sum + parseFloat(p.getDataValue('amount') || 0), 0);
+    const totalExpenses = expensePayments.reduce((sum, ep) => sum + parseFloat(ep.getDataValue('amount') || 0), 0);
+    const operationalProfitLoss = totalPayments - totalExpenses;
+    const netInvestmentChange = totalInvestments - totalWithdrawals;
+    const totalProfitLoss = operationalProfitLoss + netInvestmentChange;
+    const finalClosingBalance = runningBalance + totalProfitLoss;
+
+    // Group by expense type
+    const expenseByType = {};
+    expensePayments.forEach(ep => {
+      const typeName = ep.expense?.expenseType?.expence_type_name || 'Other';
+      if (!expenseByType[typeName]) {
+        expenseByType[typeName] = {
+          type: typeName,
+          total: 0,
+          count: 0
+        };
+      }
+      expenseByType[typeName].total += parseFloat(ep.getDataValue('amount') || 0);
+      expenseByType[typeName].count += 1;
+    });
+
+    // Group payments by mode
+    const paymentsByMode = {};
+    payments.forEach(p => {
+      const mode = p.payment_mode || 'other';
+      if (!paymentsByMode[mode]) {
+        paymentsByMode[mode] = {
+          mode,
+          total: 0,
+          count: 0
+        };
+      }
+      paymentsByMode[mode].total += parseFloat(p.getDataValue('amount') || 0);
+      paymentsByMode[mode].count += 1;
+    });
+
+    // Group payments by customer
+    const paymentsByCustomer = {};
+    payments.forEach(p => {
+      const customerId = p.customer?.customer_id || 'unknown';
+      const customerName = p.customer?.customer_name || 'Unknown Customer';
+      
+      if (!paymentsByCustomer[customerId]) {
+        paymentsByCustomer[customerId] = {
+          customer_id: customerId,
+          customer_name: customerName,
+          customer_number: p.customer?.customer_number,
+          total_amount: 0,
+          payment_count: 0,
+          payments: []
+        };
+      }
+      
+      const amount = parseFloat(p.getDataValue('amount') || 0);
+      paymentsByCustomer[customerId].total_amount += amount;
+      paymentsByCustomer[customerId].payment_count += 1;
+      paymentsByCustomer[customerId].payments.push({
+        payment_id: p.payment_id,
+        payment_number: p.payment_number,
+        amount: amount,
+        date: p.payment_date,
+        mode: p.payment_mode,
+        booking_number: p.booking?.booking_number,
+        booking_center: p.booking?.fromCenter?.office_center_name
+      });
+    });
+
+    // Group payments by booking center
+    const paymentsByBookingCenter = {};
+    payments.forEach(p => {
+      const centerId = p.booking?.from_center_id || 'unknown';
+      const centerName = p.booking?.fromCenter?.office_center_name || 'Unknown Center';
+      
+      if (!paymentsByBookingCenter[centerId]) {
+        paymentsByBookingCenter[centerId] = {
+          center_id: centerId,
+          center_name: centerName,
+          total_amount: 0,
+          payment_count: 0,
+          bookings: new Set()
+        };
+      }
+      
+      paymentsByBookingCenter[centerId].total_amount += parseFloat(p.getDataValue('amount') || 0);
+      paymentsByBookingCenter[centerId].payment_count += 1;
+      if (p.booking?.booking_id) {
+        paymentsByBookingCenter[centerId].bookings.add(p.booking.booking_id);
+      }
+    });
+
+    // Convert Set to count for each center
+    Object.values(paymentsByBookingCenter).forEach(center => {
+      center.unique_bookings = center.bookings.size;
+      delete center.bookings;
+    });
+
+    // Group investments/withdrawals by center
+    const investmentsByCenter = {};
+    openingTransactions.forEach(ot => {
+      const cId = ot.office_center_id;
+      const centerName = ot.officeCenter?.office_center_name || 'Unknown Center';
+      
+      if (!investmentsByCenter[cId]) {
+        investmentsByCenter[cId] = {
+          center_id: cId,
+          center_name: centerName,
+          total_investments: 0,
+          total_withdrawals: 0,
+          net_investment: 0,
+          transactions: []
+        };
+      }
+      
+      const amount = parseFloat(ot.opening_balance || 0);
+      if (ot.in_out === 'IN') {
+        investmentsByCenter[cId].total_investments += amount;
+        investmentsByCenter[cId].net_investment += amount;
+      } else {
+        investmentsByCenter[cId].total_withdrawals += amount;
+        investmentsByCenter[cId].net_investment -= amount;
+      }
+      
+      investmentsByCenter[cId].transactions.push({
+        id: ot.opening_balance_id,
+        date: ot.date,
+        type: ot.in_out,
+        amount: amount,
+        notes: ot.notes
+      });
+    });
+
+    // Get center name for response
+    let centerName = 'All Centers';
+    if (centerId) {
+      const center = await OfficeCenter.findOne({ 
+        where: { office_center_id: centerId }, 
+        attributes: ['office_center_id', 'office_center_name'] 
+      });
+      centerName = center?.office_center_name || 'Unknown Center';
+    }
+
+    return {
+      date_range: {
+        start_date: startDate,
+        end_date: endDate,
+        opening_balance_as_of: previousDayStr
+      },
+      center: {
+        id: centerId,
+        name: centerName
+      },
+      opening_balance: {
+        total: openingBalanceData.total.toFixed(2),
+        net_investment: openingBalanceData.net_investment.toFixed(2),
+        as_of_date: previousDayStr,
+        ...(centerId ? { 
+          center_id: centerId, 
+          center_name: centerName, 
+          last_updated: openingBalanceData.last_updated,
+          transaction_count: openingBalanceData.transaction_count
+        } : { 
+          center_wise: centerWiseOpening 
+        })
+      },
+      summary: {
+        total_payments: payments.length,
+        total_payment_amount: totalPayments.toFixed(2),
+        total_expense_payments: expensePayments.length,
+        total_expense_amount: totalExpenses.toFixed(2),
+        operational_profit_loss: operationalProfitLoss.toFixed(2),
+        total_investments: totalInvestments.toFixed(2),
+        total_withdrawals: totalWithdrawals.toFixed(2),
+        net_investment_change: netInvestmentChange.toFixed(2),
+        total_profit_loss: totalProfitLoss.toFixed(2),
+        profit_loss_status: totalProfitLoss >= 0 ? 'profit' : 'loss',
+        closing_balance: finalClosingBalance.toFixed(2),
+        closing_balance_as_of: endDate,
+        unique_customers: Object.keys(paymentsByCustomer).length,
+        centers_involved: Object.keys(paymentsByBookingCenter).length,
+        days_in_range: allDates.length
+      },
+      breakdown: {
+        daily: Object.values(dailyBreakdown),
+        by_payment_mode: Object.values(paymentsByMode),
+        by_expense_type: Object.values(expenseByType),
+        by_customer: Object.values(paymentsByCustomer),
+        by_booking_center: Object.values(paymentsByBookingCenter),
+        by_investment_center: Object.values(investmentsByCenter)
+      },
+      transactions: {
+        payments: payments.map(p => ({
+          payment_id: p.payment_id,
+          payment_number: p.payment_number,
+          date: p.payment_date,
+          amount: p.getDataValue('amount'),
+          mode: p.payment_mode,
+          type: p.payment_type,
+          description: p.description,
+          collection_center: p.collectionCenter ? {
+            id: p.collectionCenter.office_center_id,
+            name: p.collectionCenter.office_center_name
+          } : null,
+          booking_center: p.booking?.fromCenter ? {
+            id: p.booking.fromCenter.office_center_id,
+            name: p.booking.fromCenter.office_center_name
+          } : null,
+          customer: p.customer ? {
+            id: p.customer.customer_id,
+            name: p.customer.customer_name,
+            number: p.customer.customer_number
+          } : null,
+          booking: p.booking ? {
+            id: p.booking.booking_id,
+            number: p.booking.booking_number,
+            total_amount: p.booking.total_amount,
+            due_amount: p.booking.due_amount
+          } : null,
+          collector: p.collector ? {
+            id: p.collector.employee_id,
+            name: p.collector.employee_name
+          } : null
+        })),
+        expenses: expensePayments.map(ep => ({
+          expense_payment_id: ep.expense_payment_id,
+          date: ep.payment_date,
+          type: ep.expense?.expenseType?.expence_type_name,
+          amount: ep.getDataValue('amount'),
+          description: ep.expense?.description,
+          notes: ep.notes,
+          payment_type: ep.payment_type,
+          center: ep.expense?.officeCenter ? {
+            id: ep.expense.officeCenter.office_center_id,
+            name: ep.expense.officeCenter.office_center_name
+          } : null
+        })),
+        investments: openingTransactions.map(ot => ({
+          id: ot.opening_balance_id,
+          date: ot.date,
+          type: ot.in_out,
+          amount: ot.opening_balance,
+          notes: ot.notes,
+          center: ot.officeCenter ? {
+            id: ot.officeCenter.office_center_id,
+            name: ot.officeCenter.office_center_name
+          } : null
+        }))
+      }
     };
   } catch (error) {
     console.error("Error in getDateRangeProfitLoss:", error);
@@ -1243,7 +2487,16 @@ async function getDashboardStats(centerId = null) {
     return {
       date: today,
       center_id: centerId,
-      center_name: centerId ? (await OfficeCenter.findByPk(centerId))?.office_center_name : 'All Centers',
+      center_name: centerId ? (await OfficeCenter.findOne({
+      where: { office_center_id:centerId},
+      attributes: [
+        'office_center_id',
+        'office_center_name',
+        'is_active',
+        'created_at',
+        'updated_at'
+      ]
+    }))?.office_center_name : 'All Centers',
       today: {
         bookings: todayBookings,
         trips: todayTrips,
