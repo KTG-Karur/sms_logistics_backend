@@ -170,6 +170,7 @@ async function getDailyProfitLoss(date, centerId = null) {
 /**
  * Get date range profit & loss report
  */
+
 async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
   try {
     // Get opening balance for start date
@@ -181,7 +182,7 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
       }
     });
 
-    // Get all payments in date range
+    // Get all payments in date range with customer details
     const paymentsWhere = {
       payment_date: {
         [Op.between]: [startDate, endDate]
@@ -189,22 +190,60 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
       is_active: 1,
       status: 'completed'
     };
+    
     if (centerId) {
       paymentsWhere.collected_at_center = centerId;
     }
 
     const payments = await Payment.findAll({
-  where: paymentsWhere,
-  attributes: [
-    'payment_id',
-    'payment_number',
-    [sequelize.col('Payment.amount'), 'amount'], // Explicitly specify table
-    'payment_date',
-    'payment_mode',
-    'booking_id'
-  ],
-  order: [['payment_date', 'ASC']]
-});
+      where: paymentsWhere,
+      attributes: [
+        'payment_id',
+        'payment_number',
+        [sequelize.col('Payment.amount'), 'amount'],
+        'payment_date',
+        'payment_mode',
+        'payment_type',
+        'booking_id',
+        'customer_id',
+        'description'
+      ],
+      include: [
+        {
+          model: Customer,
+          as: 'customer',
+          attributes: ['customer_id', 'customer_name', 'customer_number']
+        },
+        {
+          model: Booking,
+          as: 'booking',
+          attributes: ['booking_id', 'booking_number', 'total_amount', 'due_amount'],
+          include: [
+            {
+              model: Customer,
+              as: 'fromCustomer',
+              attributes: ['customer_id', 'customer_name', 'customer_number']
+            },
+            {
+              model: Customer,
+              as: 'toCustomer',
+              attributes: ['customer_id', 'customer_name', 'customer_number']
+            }
+          ]
+        },
+        {
+          model: Employee,
+          as: 'collector',
+          attributes: ['employee_id', 'employee_name']
+        },
+        {
+          model: OfficeCenter,
+          as: 'collectionCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        }
+      ],
+      order: [['payment_date', 'ASC']]
+    });
 
     // Get all expense payments in date range
     const expensePaymentsWhere = {
@@ -215,31 +254,31 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
     };
 
     const expensePayments = await ExpensePayment.findAll({
-  where: expensePaymentsWhere,
-  attributes: [
-    'expense_payment_id',
-    [sequelize.col('ExpensePayment.amount'), 'amount'], // Explicitly specify table
-    'payment_date',
-    'payment_type',
-    'notes'
-  ],
-  include: [
-    {
-      model: Expense,
-      as: 'expense',
-      attributes: ['expense_id', 'description', 'expense_type_id'],
-      where: centerId ? { office_center_id: centerId } : {},
+      where: expensePaymentsWhere,
+      attributes: [
+        'expense_payment_id',
+        [sequelize.col('ExpensePayment.amount'), 'amount'],
+        'payment_date',
+        'payment_type',
+        'notes'
+      ],
       include: [
         {
-          model: sequelize.models.expence_type,
-          as: 'expenseType',
-          attributes: ['expence_type_id', 'expence_type_name']
+          model: Expense,
+          as: 'expense',
+          attributes: ['expense_id', 'description', 'expense_type_id'],
+          where: centerId ? { office_center_id: centerId } : {},
+          include: [
+            {
+              model: sequelize.models.expence_type,
+              as: 'expenseType',
+              attributes: ['expence_type_id', 'expence_type_name']
+            }
+          ]
         }
-      ]
-    }
-  ],
-  order: [['payment_date', 'ASC']]
-});
+      ],
+      order: [['payment_date', 'ASC']]
+    });
 
     // Group by date
     const dailyBreakdown = {};
@@ -252,8 +291,8 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
       const dayPayments = payments.filter(p => p.payment_date === date);
       const dayExpenses = expensePayments.filter(ep => ep.payment_date === date);
       
-      const dayPaymentTotal = dayPayments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
-      const dayExpenseTotal = dayExpenses.reduce((sum, ep) => sum + parseFloat(ep.amount || 0), 0);
+      const dayPaymentTotal = dayPayments.reduce((sum, p) => sum + parseFloat(p.getDataValue('amount') || 0), 0);
+      const dayExpenseTotal = dayExpenses.reduce((sum, ep) => sum + parseFloat(ep.getDataValue('amount') || 0), 0);
       
       dailyBreakdown[date] = {
         date,
@@ -266,8 +305,8 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
     }
 
     // Calculate totals
-    const totalPayments = payments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
-    const totalExpenses = expensePayments.reduce((sum, ep) => sum + parseFloat(ep.amount || 0), 0);
+    const totalPayments = payments.reduce((sum, p) => sum + parseFloat(p.getDataValue('amount') || 0), 0);
+    const totalExpenses = expensePayments.reduce((sum, ep) => sum + parseFloat(ep.getDataValue('amount') || 0), 0);
     const profitLoss = totalPayments - totalExpenses;
 
     // Group by expense type
@@ -281,7 +320,7 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
           count: 0
         };
       }
-      expenseByType[typeName].total += parseFloat(ep.amount || 0);
+      expenseByType[typeName].total += parseFloat(ep.getDataValue('amount') || 0);
       expenseByType[typeName].count += 1;
     });
 
@@ -296,8 +335,38 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
           count: 0
         };
       }
-      paymentsByMode[mode].total += parseFloat(p.amount || 0);
+      paymentsByMode[mode].total += parseFloat(p.getDataValue('amount') || 0);
       paymentsByMode[mode].count += 1;
+    });
+
+    // Group payments by customer
+    const paymentsByCustomer = {};
+    payments.forEach(p => {
+      const customerId = p.customer?.customer_id || 'unknown';
+      const customerName = p.customer?.customer_name || 'Unknown Customer';
+      
+      if (!paymentsByCustomer[customerId]) {
+        paymentsByCustomer[customerId] = {
+          customer_id: customerId,
+          customer_name: customerName,
+          customer_number: p.customer?.customer_number,
+          total_amount: 0,
+          payment_count: 0,
+          payments: []
+        };
+      }
+      
+      const amount = parseFloat(p.getDataValue('amount') || 0);
+      paymentsByCustomer[customerId].total_amount += amount;
+      paymentsByCustomer[customerId].payment_count += 1;
+      paymentsByCustomer[customerId].payments.push({
+        payment_id: p.payment_id,
+        payment_number: p.payment_number,
+        amount: amount,
+        date: p.payment_date,
+        mode: p.payment_mode,
+        booking_number: p.booking?.booking_number
+      });
     });
 
     return {
@@ -315,28 +384,51 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
         total_expense_amount: totalExpenses.toFixed(2),
         profit_loss: profitLoss.toFixed(2),
         profit_loss_status: profitLoss >= 0 ? 'profit' : 'loss',
-        closing_balance: (parseFloat(openingBalance?.opening_balance || 0) + profitLoss).toFixed(2)
+        closing_balance: (parseFloat(openingBalance?.opening_balance || 0) + profitLoss).toFixed(2),
+        unique_customers: Object.keys(paymentsByCustomer).length
       },
       breakdown: {
         daily: Object.values(dailyBreakdown),
         by_payment_mode: Object.values(paymentsByMode),
-        by_expense_type: Object.values(expenseByType)
+        by_expense_type: Object.values(expenseByType),
+        by_customer: Object.values(paymentsByCustomer)
       },
       payments: payments.map(p => ({
-        date: p.payment_date,
+        payment_id: p.payment_id,
         payment_number: p.payment_number,
-        amount: p.amount,
-        mode: p.payment_mode
+        date: p.payment_date,
+        amount: p.getDataValue('amount'),
+        mode: p.payment_mode,
+        type: p.payment_type,
+        description: p.description,
+        customer: p.customer ? {
+          id: p.customer.customer_id,
+          name: p.customer.customer_name,
+          number: p.customer.customer_number
+        } : null,
+        booking: p.booking ? {
+          id: p.booking.booking_id,
+          number: p.booking.booking_number
+        } : null,
+        collector: p.collector ? {
+          id: p.collector.employee_id,
+          name: p.collector.employee_name
+        } : null,
+        collection_center: p.collectionCenter ? {
+          id: p.collectionCenter.office_center_id,
+          name: p.collectionCenter.office_center_name
+        } : null
       })),
       expenses: expensePayments.map(ep => ({
         date: ep.payment_date,
         type: ep.expense?.expenseType?.expence_type_name,
-        amount: ep.amount,
+        amount: ep.getDataValue('amount'),
         description: ep.expense?.description,
         notes: ep.notes
       }))
     };
   } catch (error) {
+    console.error("Error in getDateRangeProfitLoss:", error);
     throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
   }
 }
