@@ -1370,7 +1370,7 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
       // Calculate opening balance adjustments (IN/OUT)
       let dayInvestmentTotal = 0;
       let dayWithdrawalTotal = 0;
-      const dayInvestments = [];
+      const dayInvestments = []; 
       const dayWithdrawals = [];
       
       dayOpeningTrans.forEach(trans => {
