@@ -61,7 +61,6 @@ module.exports = {
       ...migrationDefaults(),
     });
 
-    // Add indexes for faster queries
     await queryInterface.addIndex('expense', ['expense_date'], {
       name: 'idx_expense_date'
     });

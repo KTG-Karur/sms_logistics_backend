@@ -14,7 +14,7 @@ module.exports = {
       },
       expence_type_id: {
         allowNull: false,
-        primaryKey: true,
+        unique: true,  
         type: Sequelize.STRING
       },
       expence_type_name: {
