@@ -46,7 +46,7 @@ async function getSalaryExpenseTypeId() {
 function getMonthDates(salaryMonth) {
   const startDate = moment(salaryMonth, 'YYYY-MM').startOf('month').format('YYYY-MM-DD');
   const endDate = moment(salaryMonth, 'YYYY-MM').endOf('month').format('YYYY-MM-DD');
-  const daysInMonth = moment(salaryMonth, 'YYYY-MM').daysInMonth();
+  const daysInMonth = 30;
   return { startDate, endDate, daysInMonth };
 }
 
@@ -183,7 +183,7 @@ async function calculateEmployeeSalary(employeeId, salaryMonth, includeAdjustmen
       presentDays: 0,
       absentDays: 0,
       halfDays: 0,
-      totalDaysInMonth: 0,
+      totalDaysInMonth: 30,
       salaryType: employee.salary_type,
       monthlyRate: employee.salary_type === 'monthly' ? parseFloat(employee.salary) : 0,
       dailyRate: employee.salary_type === 'daily' ? parseFloat(employee.salary) : 0,
