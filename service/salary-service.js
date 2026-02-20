@@ -186,7 +186,12 @@ async function calculateEmployeeSalary(employeeId, salaryMonth, includeAdjustmen
       totalDaysInMonth: 0,
       salaryType: employee.salary_type,
       monthlyRate: employee.salary_type === 'monthly' ? parseFloat(employee.salary) : 0,
-      dailyRate: employee.salary_type === 'daily' ? parseFloat(employee.salary) : 0
+      dailyRate: employee.salary_type === 'daily' ? parseFloat(employee.salary) : 0,
+      deductions: [],
+      extras: [],
+      totalDeductions: 0,
+      totalExtras: 0,
+      netSalary: 0
     };
   }
   
@@ -211,6 +216,9 @@ async function calculateEmployeeSalary(employeeId, salaryMonth, includeAdjustmen
     presentDays = attendance.present;
     halfDays = attendance.halfday;
     baseSalary = (presentDays * salary) + (halfDays * 0.5 * salary);
+    
+    // For display purposes
+    absentDays = attendance.absent;
   } 
   else if (employee.salary_type === 'monthly') {
     // Monthly salary: full month salary minus deduction for absent days and half days
@@ -238,10 +246,13 @@ async function calculateEmployeeSalary(employeeId, salaryMonth, includeAdjustmen
     halfDays = attendance.halfday;
   }
   
+  // Round base salary
+  baseSalary = Math.round(baseSalary * 100) / 100;
+  
   const result = {
     employeeId: employee.employee_id,
     employeeName: employee.employee_name,
-    baseSalary: Math.round(baseSalary * 100) / 100,
+    baseSalary: baseSalary,
     presentDays: attendance.present,
     absentDays: employee.salary_type === 'monthly' ? absentDays : attendance.absent,
     halfDays: halfDays,
@@ -275,7 +286,7 @@ async function calculateEmployeeSalary(employeeId, salaryMonth, includeAdjustmen
     result.totalExtras = totalExtras;
     result.netSalary = Math.round((baseSalary + totalExtras - totalDeductions) * 100) / 100;
   } else {
-    result.netSalary = Math.round(baseSalary * 100) / 100;
+    result.netSalary = baseSalary;
   }
   
   return result;
@@ -533,12 +544,10 @@ async function getEmployeeSalaryDetail(employeeId, salaryMonth) {
   }
 }
 
-// 🔥 COMPLETE PROCESS SALARY PAYMENT FUNCTION WITH DYNAMIC EXPENSE TYPE 🔥
 async function processSalaryPayment(paymentData) {
   const transaction = await sequelize.transaction();
   
   try {
-    // Destructure all fields from paymentData
     const {
       employeeId,
       salaryMonth,
@@ -584,19 +593,22 @@ async function processSalaryPayment(paymentData) {
       lock: transaction.LOCK
     });
     
+    const salaryDetail = await calculateEmployeeSalary(employeeId, salaryMonth, true);
+    const correctNetSalary = salaryDetail.netSalary;
+    
+    console.log("Salary Detail:", {
+      baseSalary: salaryDetail.baseSalary,
+      netSalary: correctNetSalary,
+      totalDeductions: salaryDetail.totalDeductions,
+      totalExtras: salaryDetail.totalExtras
+    });
+    
     if (!expense) {
-      // Calculate salary first
-      const salaryDetail = await calculateEmployeeSalary(employeeId, salaryMonth, true);
-      
-      // Create expense with dynamically fetched expense_type_id
-      const expenseId = `EXP${moment().format('YYYYMMDDHHmmss')}${Math.floor(Math.random() * 1000)}`;
-      
       expense = await Expense.create({
-        expense_id: expenseId,
         expense_date: moment(salaryMonth, 'YYYY-MM').startOf('month').format('YYYY-MM-DD'),
-        expense_type_id: salaryExpenseTypeId,  // ✅ Dynamically fetched
+        expense_type_id: salaryExpenseTypeId,
         office_center_id: officeCenterId,
-        amount: salaryDetail.netSalary,
+        amount: correctNetSalary,  
         description: `Salary for ${salaryDetail.employeeName} - ${salaryMonth}`,
         employee_id: employeeId,
         salary_month: salaryMonth,
@@ -604,9 +616,28 @@ async function processSalaryPayment(paymentData) {
         is_active: 1
       }, { transaction });
       
-      console.log("Created new expense:", expense.expense_id);
+      console.log("Created new expense:", {
+        expense_id: expense.expense_id,
+        amount: expense.amount
+      });
     } else {
-      console.log("Found existing expense:", expense.expense_id);
+      console.log("Found existing expense:", {
+        expense_id: expense.expense_id,
+        amount: expense.amount,
+        paid_amount: expense.paid_amount
+      });
+      
+      const currentExpenseAmount = parseFloat(expense.amount);
+      
+      if (Math.abs(currentExpenseAmount - correctNetSalary) > 0.01) {
+        console.log(`Updating expense amount from ${currentExpenseAmount} to ${correctNetSalary} to include adjustments`);
+        
+        await expense.update({
+          amount: correctNetSalary
+        }, { transaction });
+        
+        console.log("Expense amount updated successfully");
+      }
     }
     
     // Validate payment amount
@@ -624,11 +655,7 @@ async function processSalaryPayment(paymentData) {
       );
     }
     
-    // Create expense payment
-    const paymentId = `PAY${moment().format('YYYYMMDDHHmmss')}${Math.floor(Math.random() * 1000)}`;
-    
     const payment = await ExpensePayment.create({
-      expense_payment_id: paymentId,
       expense_id: expense.expense_id,
       payment_date: paymentDate,
       amount: paymentAmount,
@@ -638,9 +665,11 @@ async function processSalaryPayment(paymentData) {
       is_active: 1
     }, { transaction });
     
-    console.log("Created payment:", payment.expense_payment_id);
+    console.log("Created payment:", {
+      payment_id: payment.expense_payment_id,
+      amount: payment.amount
+    });
     
-    // Update expense paid_amount (will trigger is_paid update via hook)
     await expense.update({
       paid_amount: newTotalPaid
     }, { transaction });
