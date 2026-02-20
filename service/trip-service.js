@@ -1279,6 +1279,475 @@ async function updateTripBookings(tripId, updateData) {
   }
 }
 
+// =============================================
+// GET TRIP WITH CONSOLIDATED PACKAGE DETAILS
+// =============================================
+
+/**
+ * Get trip details with consolidated package information grouped by package type
+ * Returns:
+ * - Trip details (without individual booking details)
+ * - Package summary with total quantity and charges per package type
+ * - Package type details with name, quantity, pickup charge, drop charge, etc.
+ */
+// =============================================
+// GET TRIP WITH CONSOLIDATED PACKAGE DETAILS
+// =============================================
+
+/**
+ * Get trip details with consolidated package information grouped by package type
+ * Returns:
+ * - Trip details (without individual booking details)
+ * - Package summary with total quantity and charges per package type
+ * - Package type details with name, quantity, pickup charge, drop charge, etc.
+ */
+async function getTripWithPackageDetails(tripId) {
+  try {
+    // First get the trip with basic information
+    const trip = await Trip.findOne({
+      where: { trip_id: tripId, is_active: 1 },
+      attributes: [
+        'trip_id',
+        'trip_number',
+        'from_center_id',
+        'to_center_id',
+        'vehicle_id',
+        'driver_id',
+        'trip_date',
+        'estimated_departure',
+        'estimated_arrival',
+        'actual_departure',
+        'actual_arrival',
+        'status',
+        'remarks',
+        'total_weight',
+        'total_packages',
+        'total_amount',
+        'created_at',
+        'updated_at'
+      ],
+      include: [
+        {
+          model: OfficeCenter,
+          as: 'fromCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        },
+        {
+          model: OfficeCenter,
+          as: 'toCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        },
+        {
+          model: Vehicle,
+          as: 'vehicle',
+          attributes: ['vehicle_id', 'vehicle_number_plate']
+        },
+        {
+          model: Employee,
+          as: 'driver',
+          attributes: ['employee_id', 'employee_name', 'mobile_no', 'licence_number']
+        },
+        {
+          model: Employee,
+          as: 'loadmen',
+          through: { model: TripLoadman, attributes: [] },
+          attributes: ['employee_id', 'employee_name', 'mobile_no'],
+          required: false
+        }
+      ]
+    });
+
+    if (!trip) {
+      throw new Error(messages.DATA_NOT_FOUND);
+    }
+
+    // Get all bookings for this trip
+    const tripBookings = await TripBooking.findAll({
+      where: { 
+        trip_id: tripId,
+        is_active: 1 
+      },
+      attributes: ['booking_id', 'trip_booking_id']
+    });
+
+    const bookingIds = tripBookings.map(tb => tb.booking_id);
+
+    if (bookingIds.length === 0) {
+      // No bookings in this trip
+      return {
+        ...trip.toJSON(),
+        package_summary: {
+          total_package_types: 0,
+          total_quantity: 0,
+          total_pickup_charges: 0,
+          total_drop_charges: 0,
+          total_handling_charges: 0,
+          total_amount: 0,
+          package_types: []
+        }
+      };
+    }
+
+    // Get all packages for these bookings with package type details
+    const packages = await BookingPackage.findAll({
+      where: {
+        booking_id: { [Op.in]: bookingIds },
+        is_active: 1
+      },
+      attributes: [
+        'booking_package_id',
+        'booking_id',
+        'package_type_id',
+        'quantity',
+        'pickup_charge',
+        'drop_charge',
+        'handling_charge',
+        'total_package_charge'
+      ],
+      include: [
+        {
+          model: PackageType,
+          as: 'packageType',
+          attributes: [
+            'package_type_id',
+            'package_type_name',
+            'package_pickup_price',
+            'package_drop_price'
+          ]
+        }
+      ]
+    });
+
+    // Group packages by package type
+    const packageTypeMap = {};
+    
+    packages.forEach(pkg => {
+      const typeId = pkg.package_type_id;
+      const typeName = pkg.packageType?.package_type_name || 'Unknown';
+      const pickupPrice = parseFloat(pkg.packageType?.package_pickup_price || 0);
+      const dropPrice = parseFloat(pkg.packageType?.package_drop_price || 0);
+      
+      if (!packageTypeMap[typeId]) {
+        packageTypeMap[typeId] = {
+          package_type_id: typeId,
+          package_type_name: typeName,
+          quantity: 0,
+          total_pickup_charge: 0,
+          total_drop_charge: 0,
+          total_handling_charge: 0,
+          total_amount: 0,
+          unit_pickup_price: pickupPrice,
+          unit_drop_price: dropPrice,
+          bookings_count: 0,
+          packages_count: 0,
+          booking_ids: new Set()
+        };
+      }
+      
+      const pkgQuantity = pkg.quantity || 1;
+      packageTypeMap[typeId].quantity += pkgQuantity;
+      packageTypeMap[typeId].total_pickup_charge += parseFloat(pkg.pickup_charge || 0) * pkgQuantity;
+      packageTypeMap[typeId].total_drop_charge += parseFloat(pkg.drop_charge || 0) * pkgQuantity;
+      packageTypeMap[typeId].total_handling_charge += parseFloat(pkg.handling_charge || 0) * pkgQuantity;
+      packageTypeMap[typeId].total_amount += parseFloat(pkg.total_package_charge || 0);
+      packageTypeMap[typeId].packages_count += 1;
+      packageTypeMap[typeId].booking_ids.add(pkg.booking_id);
+    });
+
+    // Convert to array and add booking count
+    const packageTypes = Object.values(packageTypeMap).map(type => ({
+      package_type_id: type.package_type_id,
+      package_type_name: type.package_type_name,
+      quantity: type.quantity,
+      total_pickup_charge: type.total_pickup_charge.toFixed(2),
+      total_drop_charge: type.total_drop_charge.toFixed(2),
+      total_handling_charge: type.total_handling_charge.toFixed(2),
+      total_amount: type.total_amount.toFixed(2),
+      unit_pickup_price: type.unit_pickup_price.toFixed(2),
+      unit_drop_price: type.unit_drop_price.toFixed(2),
+      bookings_count: type.booking_ids.size,
+      packages_count: type.packages_count
+    }));
+
+    // Calculate totals
+    const totalQuantity = packageTypes.reduce((sum, type) => sum + type.quantity, 0);
+    const totalPickupCharges = packageTypes.reduce((sum, type) => sum + parseFloat(type.total_pickup_charge), 0);
+    const totalDropCharges = packageTypes.reduce((sum, type) => sum + parseFloat(type.total_drop_charge), 0);
+    const totalHandlingCharges = packageTypes.reduce((sum, type) => sum + parseFloat(type.total_handling_charge), 0);
+    const totalAmount = packageTypes.reduce((sum, type) => sum + parseFloat(type.total_amount), 0);
+
+    const tripJson = trip.toJSON();
+
+    return {
+      trip: tripJson,
+      package_summary: {
+        total_package_types: packageTypes.length,
+        total_quantity: totalQuantity,
+        total_pickup_charges: totalPickupCharges.toFixed(2),
+        total_drop_charges: totalDropCharges.toFixed(2),
+        total_handling_charges: totalHandlingCharges.toFixed(2),
+        total_amount: totalAmount.toFixed(2),
+        average_per_package: totalQuantity > 0 ? (totalAmount / totalQuantity).toFixed(2) : 0,
+        package_types: packageTypes
+      },
+      stats: {
+        total_bookings: bookingIds.length,
+        total_packages: packages.length
+      }
+    };
+
+  } catch (error) {
+    console.error("Error in getTripWithPackageDetails:", error);
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+/**
+ * Get trip with package details including loadmen assignments per package type
+ */
+async function getTripWithPackageDetailsAndLoadmen(tripId) {
+  try {
+    // Get trip basic info (same as above)
+    const trip = await Trip.findOne({
+      where: { trip_id: tripId, is_active: 1 },
+      attributes: [
+        'trip_id',
+        'trip_number',
+        'from_center_id',
+        'to_center_id',
+        'vehicle_id',
+        'driver_id',
+        'trip_date',
+        'estimated_departure',
+        'estimated_arrival',
+        'actual_departure',
+        'actual_arrival',
+        'status',
+        'remarks',
+        'total_weight',
+        'total_packages',
+        'total_amount',
+        'created_at',
+        'updated_at'
+      ],
+      include: [
+        {
+          model: OfficeCenter,
+          as: 'fromCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        },
+        {
+          model: OfficeCenter,
+          as: 'toCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        },
+        {
+          model: Vehicle,
+          as: 'vehicle',
+          attributes: ['vehicle_id', 'vehicle_number_plate']
+        },
+        {
+          model: Employee,
+          as: 'driver',
+          attributes: ['employee_id', 'employee_name', 'mobile_no']
+        },
+        {
+          model: Employee,
+          as: 'loadmen',
+          through: { model: TripLoadman, attributes: [] },
+          attributes: ['employee_id', 'employee_name', 'mobile_no'],
+          required: false
+        }
+      ]
+    });
+
+    if (!trip) {
+      throw new Error(messages.DATA_NOT_FOUND);
+    }
+
+    // Get all bookings for this trip
+    const tripBookings = await TripBooking.findAll({
+      where: { 
+        trip_id: tripId,
+        is_active: 1 
+      },
+      attributes: ['booking_id', 'trip_booking_id']
+    });
+
+    const bookingIds = tripBookings.map(tb => tb.booking_id);
+
+    if (bookingIds.length === 0) {
+      return {
+        ...trip.toJSON(),
+        package_summary: {
+          total_package_types: 0,
+          total_quantity: 0,
+          total_pickup_charges: 0,
+          total_drop_charges: 0,
+          total_handling_charges: 0,
+          total_amount: 0,
+          package_types: []
+        }
+      };
+    }
+
+    // Get all packages with loadmen assignments
+    const packages = await BookingPackage.findAll({
+      where: {
+        booking_id: { [Op.in]: bookingIds },
+        is_active: 1
+      },
+      attributes: [
+        'booking_package_id',
+        'booking_id',
+        'package_type_id',
+        'quantity',
+        'pickup_charge',
+        'drop_charge',
+        'handling_charge',
+        'total_package_charge'
+      ],
+      include: [
+        {
+          model: PackageType,
+          as: 'packageType',
+          attributes: [
+            'package_type_id',
+            'package_type_name',
+            'package_pickup_price',
+            'package_drop_price'
+          ]
+        },
+        {
+          model: PackageLoadman,
+          as: 'packageLoadmen',
+          where: { is_active: 1 },
+          required: false,
+          attributes: [
+            'package_loadman_id',
+            'loadman_type',
+            'amount_earned'
+          ],
+          include: [
+            {
+              model: Employee,
+              as: 'loadman',
+              attributes: ['employee_id', 'employee_name', 'mobile_no']
+            }
+          ]
+        }
+      ]
+    });
+
+    // Group by package type
+    const packageTypeMap = {};
+    const loadmenSummary = {};
+    
+    packages.forEach(pkg => {
+      const typeId = pkg.package_type_id;
+      const typeName = pkg.packageType?.package_type_name || 'Unknown';
+      
+      if (!packageTypeMap[typeId]) {
+        packageTypeMap[typeId] = {
+          package_type_id: typeId,
+          package_type_name: typeName,
+          quantity: 0,
+          total_pickup_charge: 0,
+          total_drop_charge: 0,
+          total_handling_charge: 0,
+          total_amount: 0,
+          package_count: 0,
+          booking_count: 0,
+          booking_ids: new Set(),
+          loadmen: {}
+        };
+      }
+      
+      const pkgQuantity = pkg.quantity || 1;
+      packageTypeMap[typeId].quantity += pkgQuantity;
+      packageTypeMap[typeId].total_pickup_charge += parseFloat(pkg.pickup_charge || 0) * pkgQuantity;
+      packageTypeMap[typeId].total_drop_charge += parseFloat(pkg.drop_charge || 0) * pkgQuantity;
+      packageTypeMap[typeId].total_handling_charge += parseFloat(pkg.handling_charge || 0) * pkgQuantity;
+      packageTypeMap[typeId].total_amount += parseFloat(pkg.total_package_charge || 0);
+      packageTypeMap[typeId].package_count += 1;
+      packageTypeMap[typeId].booking_ids.add(pkg.booking_id);
+      
+      // Track loadmen for this package type
+      if (pkg.packageLoadmen && pkg.packageLoadmen.length > 0) {
+        pkg.packageLoadmen.forEach(pl => {
+          const loadmanId = pl.loadman?.employee_id;
+          const loadmanName = pl.loadman?.employee_name;
+          
+          if (!packageTypeMap[typeId].loadmen[loadmanId]) {
+            packageTypeMap[typeId].loadmen[loadmanId] = {
+              loadman_id: loadmanId,
+              loadman_name: loadmanName,
+              total_earned: 0,
+              packages_handled: 0,
+              pickup_count: 0,
+              drop_count: 0
+            };
+          }
+          
+          packageTypeMap[typeId].loadmen[loadmanId].total_earned += parseFloat(pl.amount_earned || 0);
+          packageTypeMap[typeId].loadmen[loadmanId].packages_handled += 1;
+          
+          if (pl.loadman_type === 'pickup' || pl.loadman_type === 'both') {
+            packageTypeMap[typeId].loadmen[loadmanId].pickup_count += 1;
+          }
+          if (pl.loadman_type === 'drop' || pl.loadman_type === 'both') {
+            packageTypeMap[typeId].loadmen[loadmanId].drop_count += 1;
+          }
+        });
+      }
+    });
+
+    // Convert to array format
+    const packageTypes = Object.values(packageTypeMap).map(type => ({
+      package_type_id: type.package_type_id,
+      package_type_name: type.package_type_name,
+      quantity: type.quantity,
+      total_pickup_charge: type.total_pickup_charge.toFixed(2),
+      total_drop_charge: type.total_drop_charge.toFixed(2),
+      total_handling_charge: type.total_handling_charge.toFixed(2),
+      total_amount: type.total_amount.toFixed(2),
+      package_count: type.package_count,
+      booking_count: type.booking_ids.size,
+      loadmen: Object.values(type.loadmen)
+    }));
+
+    // Calculate totals
+    const totalQuantity = packageTypes.reduce((sum, type) => sum + type.quantity, 0);
+    const totalPickupCharges = packageTypes.reduce((sum, type) => sum + parseFloat(type.total_pickup_charge), 0);
+    const totalDropCharges = packageTypes.reduce((sum, type) => sum + parseFloat(type.total_drop_charge), 0);
+    const totalHandlingCharges = packageTypes.reduce((sum, type) => sum + parseFloat(type.total_handling_charge), 0);
+    const totalAmount = packageTypes.reduce((sum, type) => sum + parseFloat(type.total_amount), 0);
+
+    const tripJson = trip.toJSON();
+
+    return {
+      trip: tripJson,
+      package_summary: {
+        total_package_types: packageTypes.length,
+        total_quantity: totalQuantity,
+        total_pickup_charges: totalPickupCharges.toFixed(2),
+        total_drop_charges: totalDropCharges.toFixed(2),
+        total_handling_charges: totalHandlingCharges.toFixed(2),
+        total_amount: totalAmount.toFixed(2),
+        average_per_package: totalQuantity > 0 ? (totalAmount / totalQuantity).toFixed(2) : 0,
+        package_types: packageTypes
+      },
+      stats: {
+        total_bookings: bookingIds.length,
+        total_packages: packages.length
+      }
+    };
+
+  } catch (error) {
+    console.error("Error in getTripWithPackageDetailsAndLoadmen:", error);
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
 module.exports = {
   getTrips,
   getTripById,
@@ -1290,5 +1759,7 @@ module.exports = {
   getAvailableVehicles,
   getAvailableDrivers,
   getAvailableLoadmen,
-  updateTripBookings
+  updateTripBookings,
+  getTripWithPackageDetails,
+  getTripWithPackageDetailsAndLoadmen 
 };

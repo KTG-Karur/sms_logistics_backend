@@ -450,6 +450,33 @@ async function updateTripBookings(req, res) {
   }
 }
 
+// =============================================
+// GET TRIP WITH PACKAGE DETAILS (CONSOLIDATED BY PACKAGE TYPE)
+// =============================================
+
+async function getTripWithPackageDetails(req, res) {
+  const responseEntries = new ResponseEntry();
+  
+  try {
+    if (!req.params.tripId) {
+      throw new Error("Trip ID is required");
+    }
+    
+    responseEntries.data = await tripServices.getTripWithPackageDetails(req.params.tripId);
+    
+    if (!responseEntries.data) {
+      responseEntries.message = messages.DATA_NOT_FOUND;
+    }
+  } catch (error) {
+    responseEntries.error = true;
+    responseEntries.message = error.message ? error.message : error;
+    responseEntries.code = error.code ? error.code : responseCode.BAD_REQUEST;
+    res.status(responseCode.BAD_REQUEST);
+  } finally {
+    res.send(responseEntries);
+  }
+}
+
 module.exports = async function (fastify) {
   // Get endpoints
   fastify.route({
@@ -492,6 +519,14 @@ module.exports = async function (fastify) {
     url: "/trips/:tripId",
     // preHandler: verifyToken,
     handler: getTripById,
+  });
+
+    // NEW ROUTE FOR TRIP WITH CONSOLIDATED PACKAGE DETAILS
+  fastify.route({
+    method: "GET",
+    url: "/trips/:tripId/package-details",
+    // preHandler: verifyToken,
+    handler: getTripWithPackageDetails,
   });
   
   // Create endpoint
