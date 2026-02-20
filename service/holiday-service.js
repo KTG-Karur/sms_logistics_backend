@@ -5,73 +5,71 @@ const _ = require('lodash');
 const { QueryTypes } = require('sequelize');
 
 async function getHoliday(query) {
-    try {
-        let iql = "";
-        let replacements = {}; // Add replacements for parameterized query
-        
-        // Build WHERE clause
-        if (query && Object.keys(query).length > 0) {
-            const conditions = [];
-            
-            if (query.holidayId) {
-                conditions.push(`holiday_id = :holidayId`);
-                replacements.holidayId = query.holidayId;
-            }
-            
-            if (query.isActive !== undefined && query.isActive !== '') {
-                conditions.push(`is_active = :isActive`);
-                replacements.isActive = query.isActive;
-            }
-            
-            if (query.holidayDate) {
-                conditions.push(`DATE(holiday_date) = :holidayDate`);
-                replacements.holidayDate = query.holidayDate;
-            }
-            
-            if (conditions.length > 0) {
-                iql = `WHERE ${conditions.join(' AND ')}`;
-            }
-        }
-
-        // Add ordering
-        const orderBy = ` ORDER BY holiday_date DESC`;
-
-        const queryString = `
-            SELECT 
-                holiday_id AS "holidayId", 
-                is_active AS "isActive", 
-                holiday_date AS "holidayDate", 
-                reason, 
-                created_at AS "createdAt", 
-                created_by AS "createdBy", 
-                updated_at AS "updatedAt", 
-                updated_by AS "updatedBy", 
-                deleted_at AS "deletedAt" 
-            FROM holidays 
-            ${iql} 
-            ${orderBy}
-        `;
-
-        console.log('SQL Query:', queryString); // For debugging
-        console.log('Replacements:', replacements); // For debugging
-
-        const result = await sequelize.query(
-            queryString, 
-            {
-                type: QueryTypes.SELECT,
-                raw: true,
-                nest: false,
-                replacements: replacements // Use parameterized query to prevent SQL injection
-            }
-        );
-        
-        return result;
-    } catch (error) {
-        console.error('Error in getHoliday:', error);
-        throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  try {
+    let iql = "";
+    let replacements = {};
+    
+    // Always filter by is_active = 1 unless specifically requested otherwise
+    let conditions = ["is_active = 1"];
+    
+    // Build WHERE clause with existing conditions
+    if (query && Object.keys(query).length > 0) {
+      if (query.holidayId) {
+        conditions.push(`holiday_id = :holidayId`);
+        replacements.holidayId = query.holidayId;
+      }
+      if (query.isActive !== undefined && query.isActive !== '') {
+        // Override the default if isActive is explicitly provided
+        conditions = conditions.filter(c => !c.includes('is_active'));
+        conditions.push(`is_active = :isActive`);
+        replacements.isActive = query.isActive;
+      }
+      if (query.holidayDate) {
+        conditions.push(`DATE(holiday_date) = :holidayDate`);
+        replacements.holidayDate = query.holidayDate;
+      }
     }
+    
+    iql = `WHERE ${conditions.join(' AND ')}`;
+    
+    // Add ordering
+    const orderBy = ` ORDER BY holiday_date DESC`;
+    
+    const queryString = `
+      SELECT 
+        holiday_id AS "holidayId",
+        is_active AS "isActive",
+        holiday_date AS "holidayDate",
+        reason,
+        created_at AS "createdAt",
+        created_by AS "createdBy",
+        updated_at AS "updatedAt",
+        updated_by AS "updatedBy",
+        deleted_at AS "deletedAt"
+      FROM holidays 
+      ${iql} 
+      ${orderBy}
+    `;
+    
+    console.log('SQL Query:', queryString);
+    console.log('Replacements:', replacements);
+    
+    const result = await sequelize.query(
+      queryString,
+      { 
+        type: QueryTypes.SELECT, 
+        raw: true, 
+        nest: false, 
+        replacements: replacements 
+      }
+    );
+    
+    return result;
+  } catch (error) {
+    console.error('Error in getHoliday:', error);
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
 }
-
 async function createHoliday(postData) {
     try {
         // Convert camelCase to snake_case
@@ -112,19 +110,26 @@ async function updateHoliday(holidayId, putData) {
     }
 }
 
-// Add delete holiday function (missing from your backend)
+// Replace your deleteHoliday function with this:
+
 async function deleteHoliday(holidayId) {
-    try {
-        // Soft delete (since paranoid: true)
-        await sequelize.models.holiday.destroy({
-            where: { holiday_id: holidayId }
-        });
-        
-        return { success: true, message: 'Holiday deleted successfully' };
-    } catch (error) {
-        console.error('Error in deleteHoliday:', error);
-        throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
-    }
+  try {
+    // Instead of destroy, update is_active to 0
+    await sequelize.models.holiday.update(
+      { 
+        is_active: 0,
+        updated_at: new Date() 
+      },
+      { 
+        where: { holiday_id: holidayId } 
+      }
+    );
+    
+    return { success: true, message: 'Holiday deactivated successfully' };
+  } catch (error) {
+    console.error('Error in deleteHoliday:', error);
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
 }
 
 module.exports = {
