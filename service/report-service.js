@@ -13,7 +13,7 @@ const {
   ExpensePayment,
   OpeningBalance,
   OfficeCenter,
-  Customer,
+  Customer,Location,PackageType,TripStage,
   Employee,
   sequelize 
 } = require("../models");
@@ -2536,11 +2536,714 @@ async function getDashboardStats(centerId = null) {
   }
 }
 
+// =============================================
+// BOOKING WITH TRIP, DRIVER, AND PAYMENT DETAILS
+// =============================================
+
+/**
+ * Get booking details with complete information
+ */
+async function getBookingWithDetails(bookingId, options = {}) {
+  try {
+    const {
+      includeTrip = true,
+      includePayments = true,
+      includePackages = true
+    } = options;
+    
+    // Build include array
+    const include = [
+      {
+        model: OfficeCenter,
+        as: 'fromCenter',
+        attributes: ['office_center_id', 'office_center_name']
+      },
+      {
+        model: OfficeCenter,
+        as: 'toCenter',
+        attributes: ['office_center_id', 'office_center_name']
+      },
+      {
+        model: Location,
+        as: 'fromLocation',
+        attributes: ['location_id', 'location_name']
+      },
+      {
+        model: Location,
+        as: 'toLocation',
+        attributes: ['location_id', 'location_name']
+      },
+      {
+        model: Customer,
+        as: 'fromCustomer',
+        attributes: ['customer_id', 'customer_name', 'customer_number']
+      },
+      {
+        model: Customer,
+        as: 'toCustomer',
+        attributes: ['customer_id', 'customer_name', 'customer_number']
+      }
+    ];
+    
+    // Include packages if requested
+    if (includePackages) {
+      include.push({
+        model: BookingPackage,
+        as: 'packages',
+        where: { is_active: 1 },
+        required: false,
+        attributes: [
+          'booking_package_id',
+          'package_type_id',
+          'quantity',
+          'pickup_charge',
+          'drop_charge',
+          'handling_charge',
+          'total_package_charge'
+        ],
+        include: [
+          {
+            model: PackageType,
+            as: 'packageType',
+            attributes: ['package_type_id', 'package_type_name']
+          }
+        ]
+      });
+    }
+    
+    // Include payments if requested
+    if (includePayments) {
+      include.push({
+        model: Payment,
+        as: 'payments',
+        where: { is_active: 1 },
+        required: false,
+        attributes: [
+          'payment_id',
+          'payment_number',
+          'amount',
+          'payment_date',
+          'payment_mode',
+          'payment_type',
+          'status',
+          'description'
+        ],
+        include: [
+          {
+            model: Employee,
+            as: 'collector',
+            attributes: ['employee_id', 'employee_name']
+          },
+          {
+            model: OfficeCenter,
+            as: 'collectionCenter',
+            attributes: ['office_center_id', 'office_center_name']
+          }
+        ],
+        order: [['payment_date', 'DESC']]
+      });
+    }
+    
+    // Get the booking
+    const booking = await Booking.findOne({
+      where: { 
+        booking_id: bookingId, 
+        is_active: 1 
+      },
+      attributes: [
+        'booking_id',
+        'booking_number',
+        'llr_number',
+        'booking_date',
+        'from_center_id',
+        'to_center_id',
+        'from_location_id',
+        'to_location_id',
+        'from_customer_id',
+        'to_customer_id',
+        'total_amount',
+        'paid_amount',
+        'due_amount',
+        'payment_by',
+        'payment_status',
+        'delivery_status',
+        'actual_delivery_date',
+        'special_instructions',
+        'reference_number',
+        'created_at',
+        'updated_at'
+      ],
+      include
+    });
+    
+    if (!booking) {
+      throw new Error(messages.DATA_NOT_FOUND);
+    }
+    
+    // Convert to JSON for manipulation
+    const bookingJson = booking.toJSON();
+    
+    // Find trip information if requested
+    if (includeTrip) {
+      // Find which trip this booking is assigned to
+      const tripBooking = await TripBooking.findOne({
+        where: { 
+          booking_id: bookingId,
+          is_active: 1 
+        },
+        include: [
+          {
+            model: Trip,
+            as: 'trip',
+            attributes: [
+              'trip_id',
+              'trip_number',
+              'trip_date',
+              'from_center_id',
+              'to_center_id',
+              'estimated_departure',
+              'estimated_arrival',
+              'actual_departure',
+              'actual_arrival',
+              'status',
+              'remarks',
+              'total_packages',
+              'total_amount'
+            ],
+            include: [
+              {
+                model: Vehicle,
+                as: 'vehicle',
+                attributes: ['vehicle_id', 'vehicle_number_plate']
+              },
+              {
+                model: Employee,
+                as: 'driver',
+                attributes: ['employee_id', 'employee_name', 'mobile_no']
+              },
+              {
+                model: Employee,
+                as: 'loadmen',
+                through: { attributes: [] },
+                attributes: ['employee_id', 'employee_name', 'mobile_no']
+              },
+              {
+                model: OfficeCenter,
+                as: 'fromCenter',
+                attributes: ['office_center_id', 'office_center_name']
+              },
+              {
+                model: OfficeCenter,
+                as: 'toCenter',
+                attributes: ['office_center_id', 'office_center_name']
+              }
+            ]
+          }
+        ]
+      });
+      
+      if (tripBooking) {
+        bookingJson.trip = {
+          ...tripBooking.trip.toJSON(),
+          delivery_status_in_trip: tripBooking.delivery_status
+        };
+      } else {
+        bookingJson.trip = null;
+      }
+    }
+    
+    // Calculate payment summary
+    if (bookingJson.payments && bookingJson.payments.length > 0) {
+      const totalPayments = bookingJson.payments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+      const paymentsByMode = {};
+      
+      bookingJson.payments.forEach(p => {
+        const mode = p.payment_mode || 'other';
+        if (!paymentsByMode[mode]) {
+          paymentsByMode[mode] = {
+            mode,
+            total: 0,
+            count: 0
+          };
+        }
+        paymentsByMode[mode].total += parseFloat(p.amount || 0);
+        paymentsByMode[mode].count += 1;
+      });
+      
+      bookingJson.payment_summary = {
+        total_payments: bookingJson.payments.length,
+        total_amount: totalPayments.toFixed(2),
+        by_mode: Object.values(paymentsByMode),
+        last_payment_date: bookingJson.payments[0]?.payment_date
+      };
+    } else {
+      bookingJson.payment_summary = {
+        total_payments: 0,
+        total_amount: "0.00",
+        by_mode: [],
+        last_payment_date: null
+      };
+    }
+    
+    return bookingJson;
+    
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
+/**
+ * Get all bookings with optional filters and include trip/driver/payment details
+ */
+async function getAllBookingsWithDetails(filters = {}) {
+  try {
+    const {
+      startDate,
+      endDate,
+      centerId,
+      customerId,
+      status,
+      paymentStatus,
+      tripStatus,
+      search,
+      page = 1,
+      limit = 20,
+      includeTrip = true,
+      includePayments = true
+    } = filters;
+    
+    const offset = (page - 1) * limit;
+    
+    // Build where clause
+    const whereClause = { is_active: 1 };
+    
+    if (startDate && endDate) {
+      whereClause.booking_date = {
+        [Op.between]: [startDate, endDate]
+      };
+    } else if (startDate) {
+      whereClause.booking_date = {
+        [Op.gte]: startDate
+      };
+    } else if (endDate) {
+      whereClause.booking_date = {
+        [Op.lte]: endDate
+      };
+    }
+    
+    if (centerId) {
+      whereClause[Op.or] = [
+        { from_center_id: centerId },
+        { to_center_id: centerId }
+      ];
+    }
+    
+    if (customerId) {
+      whereClause[Op.or] = [
+        { from_customer_id: customerId },
+        { to_customer_id: customerId }
+      ];
+    }
+    
+    if (status) {
+      whereClause.delivery_status = status;
+    }
+    
+    if (paymentStatus) {
+      whereClause.payment_status = paymentStatus;
+    }
+    
+    if (search) {
+      whereClause[Op.or] = [
+        { booking_number: { [Op.like]: `%${search}%` } },
+        { llr_number: { [Op.like]: `%${search}%` } },
+        { reference_number: { [Op.like]: `%${search}%` } }
+      ];
+    }
+    
+    // Base include
+    const include = [
+      {
+        model: OfficeCenter,
+        as: 'fromCenter',
+        attributes: ['office_center_id', 'office_center_name']
+      },
+      {
+        model: OfficeCenter,
+        as: 'toCenter',
+        attributes: ['office_center_id', 'office_center_name']
+      },
+      {
+        model: Customer,
+        as: 'fromCustomer',
+        attributes: ['customer_id', 'customer_name', 'customer_number']
+      },
+      {
+        model: Customer,
+        as: 'toCustomer',
+        attributes: ['customer_id', 'customer_name', 'customer_number']
+      },
+      {
+        model: BookingPackage,
+        as: 'packages',
+        where: { is_active: 1 },
+        required: false,
+        attributes: [
+          'booking_package_id',
+          'package_type_id',
+          'quantity',
+          'total_package_charge'
+        ],
+        include: [
+          {
+            model: PackageType,
+            as: 'packageType',
+            attributes: ['package_type_id', 'package_type_name']
+          }
+        ]
+      }
+    ];
+    
+    // Get all bookings
+    const { count, rows: bookings } = await Booking.findAndCountAll({
+      where: whereClause,
+      attributes: [
+        'booking_id',
+        'booking_number',
+        'llr_number',
+        'booking_date',
+        'from_center_id',
+        'to_center_id',
+        'total_amount',
+        'paid_amount',
+        'due_amount',
+        'payment_by',
+        'payment_status',
+        'delivery_status',
+        'created_at'
+      ],
+      include,
+      order: [['booking_date', 'DESC'], ['created_at', 'DESC']],
+      limit,
+      offset,
+      distinct: true
+    });
+    
+    // Get all trip assignments for these bookings
+    const bookingIds = bookings.map(b => b.booking_id);
+    
+    const tripBookings = await TripBooking.findAll({
+      where: {
+        booking_id: { [Op.in]: bookingIds },
+        is_active: 1
+      },
+      include: [
+        {
+          model: Trip,
+          as: 'trip',
+          attributes: [
+            'trip_id',
+            'trip_number',
+            'trip_date',
+            'status',
+            'vehicle_id',
+            'driver_id'
+          ],
+          include: [
+            {
+              model: Vehicle,
+              as: 'vehicle',
+              attributes: ['vehicle_id', 'vehicle_number_plate']
+            },
+            {
+              model: Employee,
+              as: 'driver',
+              attributes: ['employee_id', 'employee_name']
+            }
+          ]
+        }
+      ]
+    });
+    
+    // Create a map of booking to trip
+    const bookingTripMap = {};
+    tripBookings.forEach(tb => {
+      bookingTripMap[tb.booking_id] = tb.trip;
+    });
+    
+    // Get payments if requested
+    let paymentsByBooking = {};
+    if (includePayments) {
+      const payments = await Payment.findAll({
+        where: {
+          booking_id: { [Op.in]: bookingIds },
+          is_active: 1,
+          status: 'completed'
+        },
+        attributes: [
+          'payment_id',
+          'payment_number',
+          'booking_id',
+          'amount',
+          'payment_date',
+          'payment_mode'
+        ],
+        order: [['payment_date', 'DESC']]
+      });
+      
+      // Group payments by booking
+      payments.forEach(payment => {
+        if (!paymentsByBooking[payment.booking_id]) {
+          paymentsByBooking[payment.booking_id] = [];
+        }
+        paymentsByBooking[payment.booking_id].push(payment);
+      });
+    }
+    
+    // Filter by trip status if requested
+    let filteredBookings = bookings;
+    if (tripStatus && includeTrip) {
+      filteredBookings = bookings.filter(booking => {
+        const trip = bookingTripMap[booking.booking_id];
+        if (!trip) return tripStatus === 'not_assigned';
+        return trip.status === tripStatus;
+      });
+    }
+    
+    // Enhance bookings with trip and payment info
+    const enhancedBookings = filteredBookings.map(booking => {
+      const bookingJson = booking.toJSON();
+      
+      if (includeTrip) {
+        bookingJson.trip = bookingTripMap[booking.booking_id] || null;
+      }
+      
+      if (includePayments) {
+        bookingJson.payments = paymentsByBooking[booking.booking_id] || [];
+        
+        // Add payment summary
+        const totalPayments = bookingJson.payments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
+        bookingJson.payment_summary = {
+          count: bookingJson.payments.length,
+          total: totalPayments.toFixed(2)
+        };
+      }
+      
+      return bookingJson;
+    });
+    
+    // Calculate summary statistics
+    const totalAmount = enhancedBookings.reduce((sum, b) => sum + parseFloat(b.total_amount || 0), 0);
+    const totalPaid = enhancedBookings.reduce((sum, b) => sum + parseFloat(b.paid_amount || 0), 0);
+    const totalPending = enhancedBookings.reduce((sum, b) => sum + parseFloat(b.due_amount || 0), 0);
+    
+    const statusCount = {
+      not_started: enhancedBookings.filter(b => b.delivery_status === 'not_started').length,
+      in_transit: enhancedBookings.filter(b => ['pickup_assigned', 'picked_up', 'in_transit', 'out_for_delivery'].includes(b.delivery_status)).length,
+      delivered: enhancedBookings.filter(b => b.delivery_status === 'delivered').length,
+      cancelled: enhancedBookings.filter(b => b.delivery_status === 'cancelled').length
+    };
+    
+    const tripStatusCount = {
+      assigned: enhancedBookings.filter(b => b.trip).length,
+      not_assigned: enhancedBookings.filter(b => !b.trip).length
+    };
+    
+    return {
+      summary: {
+        total_bookings: enhancedBookings.length,
+        total_amount: totalAmount.toFixed(2),
+        total_paid: totalPaid.toFixed(2),
+        total_pending: totalPending.toFixed(2),
+        payment_progress: totalAmount > 0 ? ((totalPaid / totalAmount) * 100).toFixed(2) : 0,
+        by_status: statusCount,
+        by_trip_status: tripStatusCount
+      },
+      pagination: {
+        current_page: page,
+        total_pages: Math.ceil(filteredBookings.length / limit),
+        total_records: filteredBookings.length,
+        limit
+      },
+      bookings: enhancedBookings
+    };
+    
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
+/**
+ * Get booking trip timeline - shows all stages of trip for this booking
+ */
+async function getBookingTripTimeline(bookingId) {
+  try {
+    // Find which trip this booking is assigned to
+    const tripBooking = await TripBooking.findOne({
+      where: { 
+        booking_id: bookingId,
+        is_active: 1 
+      },
+      include: [
+        {
+          model: Trip,
+          as: 'trip',
+          attributes: [
+            'trip_id',
+            'trip_number',
+            'trip_date',
+            'from_center_id',
+            'to_center_id',
+            'estimated_departure',
+            'estimated_arrival',
+            'actual_departure',
+            'actual_arrival',
+            'status',
+            'current_stage'
+          ],
+          include: [
+            {
+              model: TripStage,
+              as: 'stages',
+              attributes: [
+                'stage_id',
+                'stage_number',
+                'stage_name',
+                'from_center_id',
+                'to_center_id',
+                'estimated_departure',
+                'estimated_arrival',
+                'actual_departure',
+                'actual_arrival',
+                'status',
+                'remarks'
+              ],
+              include: [
+                {
+                  model: OfficeCenter,
+                  as: 'fromCenter',
+                  attributes: ['office_center_id', 'office_center_name']
+                },
+                {
+                  model: OfficeCenter,
+                  as: 'toCenter',
+                  attributes: ['office_center_id', 'office_center_name']
+                }
+              ],
+              order: [['stage_number', 'ASC']]
+            }
+          ]
+        }
+      ]
+    });
+    
+    if (!tripBooking || !tripBooking.trip) {
+      return {
+        booking_id: bookingId,
+        assigned_to_trip: false,
+        message: "This booking is not assigned to any trip"
+      };
+    }
+    
+    const trip = tripBooking.trip;
+    
+    // Find which stage this booking belongs to
+    const bookingStage = await TripBooking.findOne({
+      where: { booking_id: bookingId },
+      attributes: ['stage_id']
+    });
+    
+    let currentStageInfo = null;
+    if (bookingStage?.stage_id) {
+      const stage = await TripStage.findOne({
+        where: { stage_id: bookingStage.stage_id },
+        attributes: ['stage_number', 'stage_name', 'status']
+      });
+      currentStageInfo = stage;
+    }
+    
+    // Build timeline
+    const timeline = [];
+    
+    if (trip.stages && trip.stages.length > 0) {
+      trip.stages.forEach((stage, index) => {
+        const isCurrentStage = currentStageInfo && 
+          stage.stage_number === currentStageInfo.stage_number;
+        
+        const stageStatus = stage.status;
+        let statusIcon = '⏳';
+        let statusColor = 'gray';
+        
+        if (stageStatus === 'completed') {
+          statusIcon = '✅';
+          statusColor = 'green';
+        } else if (stageStatus === 'in_progress') {
+          statusIcon = '🚚';
+          statusColor = 'blue';
+        } else if (stageStatus === 'scheduled') {
+          statusIcon = '📅';
+          statusColor = 'orange';
+        } else if (stageStatus === 'delayed') {
+          statusIcon = '⚠️';
+          statusColor = 'red';
+        }
+        
+        timeline.push({
+          stage_number: stage.stage_number,
+          stage_name: stage.stage_name,
+          from_center: stage.fromCenter?.office_center_name,
+          to_center: stage.toCenter?.office_center_name,
+          estimated_departure: stage.estimated_departure,
+          estimated_arrival: stage.estimated_arrival,
+          actual_departure: stage.actual_departure,
+          actual_arrival: stage.actual_arrival,
+          status: stage.status,
+          status_icon: statusIcon,
+          status_color: statusColor,
+          is_current_stage: isCurrentStage,
+          remarks: stage.remarks
+        });
+      });
+    }
+    
+    return {
+      booking_id: bookingId,
+      assigned_to_trip: true,
+      trip: {
+        trip_id: trip.trip_id,
+        trip_number: trip.trip_number,
+        trip_date: trip.trip_date,
+        status: trip.status,
+        current_stage: trip.current_stage,
+        from_center: trip.fromCenter?.office_center_name,
+        to_center: trip.toCenter?.office_center_name,
+        estimated_departure: trip.estimated_departure,
+        estimated_arrival: trip.estimated_arrival,
+        actual_departure: trip.actual_departure,
+        actual_arrival: trip.actual_arrival
+      },
+      booking_stage: currentStageInfo ? {
+        stage_number: currentStageInfo.stage_number,
+        stage_name: currentStageInfo.stage_name,
+        status: currentStageInfo.status
+      } : null,
+      timeline
+    };
+    
+  } catch (error) {
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
+
+
 module.exports = {
   getDailyProfitLoss,
   getDateRangeProfitLoss,
   getPackageReport,
   getTripReport,
   getBalanceReport,
-  getDashboardStats
+  getDashboardStats,
+   getBookingWithDetails,
+  getAllBookingsWithDetails,
+  getBookingTripTimeline
 };
