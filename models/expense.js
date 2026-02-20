@@ -18,7 +18,14 @@ module.exports = (sequelize, DataTypes) => {
         as: 'officeCenter'
       });
 
-      // Expense has many payments - THIS IS THE IMPORTANT ONE
+      // NEW: Expense belongs to Employee (for salary expenses)
+      this.belongsTo(models.Employee, {
+        foreignKey: 'employee_id',
+        targetKey: 'employee_id',
+        as: 'employee'
+      });
+
+      // Expense has many payments
       this.hasMany(models.ExpensePayment, {
         foreignKey: 'expense_id',
         sourceKey: 'expense_id',
@@ -81,6 +88,34 @@ module.exports = (sequelize, DataTypes) => {
         validate: {
           notEmpty: {
             msg: "Office center is required"
+          }
+        }
+      },
+      // NEW FIELDS
+      employee_id: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        validate: {
+          isValidSalaryExpense(value) {
+            // If expense_type_id is for salary, employee_id should be provided
+            if (this.expense_type_id === 'EXP_TYPE_SALARY' && !value) {
+              throw new Error("Employee ID is required for salary expenses");
+            }
+          }
+        }
+      },
+      salary_month: {
+        type: DataTypes.STRING(7),
+        allowNull: true,
+        validate: {
+          isValidSalaryMonth(value) {
+            if (value && !/^\d{4}-\d{2}$/.test(value)) {
+              throw new Error("Salary month must be in YYYY-MM format");
+            }
+            // If expense_type_id is for salary, salary_month should be provided
+            if (this.expense_type_id === 'EXP_TYPE_SALARY' && !value) {
+              throw new Error("Salary month is required for salary expenses");
+            }
           }
         }
       },
@@ -180,7 +215,11 @@ module.exports = (sequelize, DataTypes) => {
         { fields: ['expense_date'], name: 'idx_expense_date' },
         { fields: ['expense_type_id'], name: 'idx_expense_type_id' },
         { fields: ['office_center_id'], name: 'idx_office_center_id' },
-        { fields: ['is_paid'], name: 'idx_is_paid' }
+        { fields: ['is_paid'], name: 'idx_is_paid' },
+        // NEW INDEXES
+        { fields: ['employee_id', 'salary_month'], name: 'idx_expense_employee_month' },
+        { fields: ['employee_id'], name: 'idx_expense_employee' },
+        { fields: ['salary_month'], name: 'idx_expense_salary_month' }
       ]
     }
   );

@@ -40,6 +40,22 @@ module.exports = {
         onUpdate: 'CASCADE',
         onDelete: 'RESTRICT'
       },
+      // New fields for salary linkage
+      employee_id: {
+        type: Sequelize.STRING,
+        allowNull: true,
+        references: {
+          model: 'employees',
+          key: 'employee_id'
+        },
+        onUpdate: 'CASCADE',
+        onDelete: 'SET NULL'
+      },
+      salary_month: {
+        type: Sequelize.STRING(7),
+        allowNull: true,
+        comment: 'Month for salary expenses in YYYY-MM format'
+      },
       amount: {
         allowNull: false,
         type: Sequelize.DECIMAL(10, 2)
@@ -75,6 +91,18 @@ module.exports = {
     
     await queryInterface.addIndex('expense', ['is_paid'], {
       name: 'idx_is_paid'
+    });
+    
+    await queryInterface.addIndex('expense', ['employee_id', 'salary_month'], {
+      name: 'idx_expense_employee_month'
+    });
+    
+    await queryInterface.addIndex('expense', ['employee_id'], {
+      name: 'idx_expense_employee'
+    });
+    
+    await queryInterface.addIndex('expense', ['salary_month'], {
+      name: 'idx_expense_salary_month'
     });
   },
 
