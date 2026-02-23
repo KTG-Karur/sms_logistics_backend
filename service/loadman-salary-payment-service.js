@@ -666,11 +666,11 @@ async function processLoadmanSalaryPayment(paymentData) {
       totalEarnings += amountEarned;
       totalPackages += quantity;
       
-      // Add handling charges if applicable
-      if (assignment.bookingPackage?.handling_charge && parseFloat(assignment.bookingPackage.handling_charge) > 0) {
-        const handlingForThisPackage = (parseFloat(assignment.bookingPackage.handling_charge) * quantity) / loadmenCount;
-        totalEarnings += handlingForThisPackage;
-      }
+      // // Add handling charges if applicable
+      // if (assignment.bookingPackage?.handling_charge && parseFloat(assignment.bookingPackage.handling_charge) > 0) {
+      //   const handlingForThisPackage = (parseFloat(assignment.bookingPackage.handling_charge) * quantity) / loadmenCount;
+      //   totalEarnings += handlingForThisPackage;
+      // }
     });
     
     totalEarnings = Math.round(totalEarnings * 100) / 100;
