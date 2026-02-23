@@ -237,15 +237,15 @@ async function calculateLoadmanDailySalary(loadmanId, date, includeDetails = tru
     
     console.log(`Calculated earnings for ${loadmanId} on ${date}: total=${totalEarnings}, pickup=${pickupEarnings}, drop=${dropEarnings}, handling=${handlingEarnings}`);
     
-    // Get payment information for this date
+    // Get payment information for this date from expenses (by salary date)
     const loadmanExpenseTypeId = await getLoadmanExpenseTypeId();
     
-    // Find expense for this loadman on this date
+    // Find expense for this loadman on this date (salary date)
     const expense = await Expense.findOne({
       where: {
         employee_id: loadmanId,
         expense_type_id: loadmanExpenseTypeId,
-        expense_date: date,
+        expense_date: date, // This is the salary date
         is_active: 1
       },
       attributes: ['expense_id', 'amount', 'paid_amount'],
@@ -411,7 +411,7 @@ async function getLoadmanSalarySummary(filters = {}) {
     
     console.log(`Found ${salaryRecords.length} salary records`);
     
-    // Get all expenses for these loadmen
+    // Get all expenses for these loadmen (by salary date)
     const expenseWhere = {
       employee_id: { [Op.in]: loadmanIds },
       expense_type_id: loadmanExpenseTypeId,
@@ -563,7 +563,7 @@ async function getLoadmanSalarySummary(filters = {}) {
   }
 }
 
-// Process loadman salary payment (supports partial payments)
+// Process loadman salary payment (pay all outstanding up to a date) - CORRECTED VERSION
 async function processLoadmanSalaryPayment(paymentData) {
   const transaction = await sequelize.transaction();
   
@@ -573,10 +573,10 @@ async function processLoadmanSalaryPayment(paymentData) {
       paymentDate,
       amount,
       officeCenterId,
+      payUntilDate, // Pay all outstanding salary up to this date
       paymentType = 'cash',
       notes = '',
-      createdBy,
-      salaryDate // This is the date of earnings being paid
+      createdBy
     } = paymentData;
     
     // Validate required fields
@@ -584,15 +584,15 @@ async function processLoadmanSalaryPayment(paymentData) {
     if (!paymentDate) throw new Error("Payment date is required");
     if (!amount) throw new Error("Payment amount is required");
     if (!officeCenterId) throw new Error("Office center ID is required");
-    if (!salaryDate) throw new Error("Salary date is required");
+    if (!payUntilDate) throw new Error("Pay until date is required");
     
     console.log("Processing loadman salary payment:", {
       loadmanId,
       paymentDate,
       amount,
       officeCenterId,
+      payUntilDate,
       paymentType,
-      salaryDate,
       createdBy
     });
     
@@ -610,49 +610,124 @@ async function processLoadmanSalaryPayment(paymentData) {
       throw new Error("Loadman not found");
     }
     
-    // Calculate earnings for the day
-    const earningsData = await calculateLoadmanDailySalary(loadmanId, salaryDate, false);
-    const dailyEarnings = earningsData.totalEarnings;
-    
-    console.log(`Daily earnings for ${salaryDate}: ${dailyEarnings}`);
-    
-    // Get or create loadman salary record for this date
-    let salaryRecord = await LoadmanSalary.findOne({
+    // Get all package assignments for this loadman WITHIN THE DATE RANGE up to payUntilDate
+    const packageAssignments = await PackageLoadman.findAll({
       where: {
         loadman_id: loadmanId,
-        salary_date: salaryDate,
+        created_at: {
+          [Op.lte]: payUntilDate + ' 23:59:59' // Only up to the end of payUntilDate
+        },
         is_active: 1
       },
+      attributes: [
+        'package_loadman_id',
+        'loadman_type',
+        'amount_earned',
+        'booking_package_id',
+        'created_at'
+      ],
+      include: [
+        {
+          model: BookingPackage,
+          as: 'bookingPackage',
+          attributes: ['quantity', 'handling_charge', 'pickup_charge', 'drop_charge'],
+          required: false
+        }
+      ],
       transaction
     });
     
-    if (!salaryRecord) {
-      // Create salary record if it doesn't exist
-      salaryRecord = await LoadmanSalary.create({
-        loadman_salary_id: uuidv4(),
-        loadman_id: loadmanId,
-        salary_date: salaryDate,
-        total_pickup_charges: earningsData.pickupEarnings || 0,
-        total_drop_charges: earningsData.dropEarnings || 0,
-        total_handling_charges: earningsData.handlingEarnings || 0,
-        total_amount: dailyEarnings,
-        package_count: earningsData.totalPackages,
-        booking_count: 0,
-        status: dailyEarnings > 0 ? 'pending' : 'processed',
-        notes: `Daily salary for ${salaryDate}`,
-        created_at: new Date(),
-        updated_at: new Date()
-      }, { transaction });
-      
-      console.log("Created salary record:", salaryRecord.loadman_salary_id);
+    console.log(`Found ${packageAssignments.length} package assignments up to ${payUntilDate}`);
+    
+    if (packageAssignments.length === 0) {
+      throw new Error(`No work found for loadman up to ${payUntilDate}`);
     }
     
-    // Find or create expense for this date
+    // Group assignments by booking_package_id to handle multiple loadmen on same package
+    const packageGroups = {};
+    packageAssignments.forEach(assignment => {
+      const packageId = assignment.booking_package_id;
+      if (!packageGroups[packageId]) {
+        packageGroups[packageId] = [];
+      }
+      packageGroups[packageId].push(assignment);
+    });
+    
+    // Calculate total earnings from all assignments up to payUntilDate
+    let totalEarnings = 0;
+    let totalPackages = 0;
+    
+    packageAssignments.forEach(assignment => {
+      const amountEarned = parseFloat(assignment.amount_earned || 0);
+      const quantity = assignment.bookingPackage?.quantity || 1;
+      const packageId = assignment.booking_package_id;
+      const loadmenCount = packageGroups[packageId]?.length || 1;
+      
+      totalEarnings += amountEarned;
+      totalPackages += quantity;
+      
+      // Add handling charges if applicable
+      if (assignment.bookingPackage?.handling_charge && parseFloat(assignment.bookingPackage.handling_charge) > 0) {
+        const handlingForThisPackage = (parseFloat(assignment.bookingPackage.handling_charge) * quantity) / loadmenCount;
+        totalEarnings += handlingForThisPackage;
+      }
+    });
+    
+    totalEarnings = Math.round(totalEarnings * 100) / 100;
+    
+    console.log(`Total earnings up to ${payUntilDate}: ${totalEarnings}`);
+    
+    // Get all expenses for this loadman up to payUntilDate
+    const expenses = await Expense.findAll({
+      where: {
+        employee_id: loadmanId,
+        expense_type_id: loadmanExpenseTypeId,
+        expense_date: {
+          [Op.lte]: payUntilDate
+        },
+        is_active: 1
+      },
+      attributes: ['expense_id', 'expense_date', 'amount', 'paid_amount'],
+      transaction
+    });
+    
+    console.log(`Found ${expenses.length} expense records`);
+    
+    // Calculate total paid amount
+    let totalPaid = 0;
+    expenses.forEach(expense => {
+      totalPaid += parseFloat(expense.paid_amount || 0);
+    });
+    totalPaid = Math.round(totalPaid * 100) / 100;
+    
+    console.log(`Total paid up to ${payUntilDate}: ${totalPaid}`);
+    
+    // Calculate outstanding amount
+    const totalOutstanding = Math.max(0, totalEarnings - totalPaid);
+    
+    console.log(`Total outstanding: ${totalOutstanding.toFixed(2)}`);
+    console.log(`Payment amount: ${amount}`);
+    
+    // Validate payment amount
+    if (parseFloat(amount) > totalOutstanding + 0.01) {
+      throw new Error(
+        `Payment amount (${amount}) exceeds total outstanding (${totalOutstanding.toFixed(2)}). ` +
+        `Maximum allowed: ${totalOutstanding.toFixed(2)}`
+      );
+    }
+    
+    if (totalOutstanding <= 0.01) {
+      throw new Error(`No outstanding amount for loadman up to ${payUntilDate}`);
+    }
+    
+    // Get the oldest unpaid date to apply payment to
+    // For simplicity, we'll create a single expense for the payment
+    // Find or create an expense for the payment date
     let expense = await Expense.findOne({
       where: {
         employee_id: loadmanId,
         expense_type_id: loadmanExpenseTypeId,
-        expense_date: salaryDate,
+        expense_date: paymentDate,
         is_active: 1
       },
       transaction,
@@ -660,14 +735,15 @@ async function processLoadmanSalaryPayment(paymentData) {
     });
     
     if (!expense) {
-      // Create expense if it doesn't exist
-      const description = `Salary for ${loadman.employee_name} - ${salaryDate}`;
+      // Create a new expense for this payment
+      const description = `Salary payment for work up to ${payUntilDate}`;
       
       expense = await Expense.create({
-        expense_date: salaryDate,
+        expense_id: uuidv4(),
+        expense_date: paymentDate,
         expense_type_id: loadmanExpenseTypeId,
         office_center_id: officeCenterId,
-        amount: dailyEarnings,
+        amount: parseFloat(amount), // Set amount to the payment amount
         description: description,
         employee_id: loadmanId,
         paid_amount: 0,
@@ -678,130 +754,114 @@ async function processLoadmanSalaryPayment(paymentData) {
         updated_at: new Date()
       }, { transaction });
       
-      console.log("Created new expense:", {
-        expense_id: expense.expense_id,
-        amount: expense.amount,
-        expense_date: expense.expense_date
-      });
-      
-      // IMPORTANT: Fetch the expense again to ensure all fields are populated
-      expense = await Expense.findOne({
-        where: { expense_id: expense.expense_id },
-        transaction
-      });
-      
-      if (!expense) {
-        throw new Error("Failed to retrieve created expense");
-      }
-    } else {
-      // Update expense amount if daily earnings changed
-      if (Math.abs(expense.amount - dailyEarnings) > 0.01) {
-        await expense.update({
-          amount: dailyEarnings
-        }, { transaction });
-        console.log(`Updated expense amount from ${expense.amount} to ${dailyEarnings}`);
-      }
-    }
-    
-    // Check if payment amount exceeds remaining balance
-    const currentPaid = parseFloat(expense.paid_amount || 0);
-    const expenseAmount = parseFloat(expense.amount || dailyEarnings);
-    const remainingAmount = expenseAmount - currentPaid;
-    
-    if (parseFloat(amount) > remainingAmount + 0.01) {
-      throw new Error(
-        `Payment amount (${amount}) exceeds remaining balance (${remainingAmount.toFixed(2)}). ` +
-        `Total due: ${expenseAmount.toFixed(2)}, Already paid: ${currentPaid.toFixed(2)}`
-      );
+      console.log(`Created expense for payment date ${paymentDate}:`, expense.expense_id);
     }
     
     // Create payment record
     const payment = await ExpensePayment.create({
+      expense_payment_id: uuidv4(),
       expense_id: expense.expense_id,
       payment_date: paymentDate,
-      amount: amount,
+      amount: parseFloat(amount),
       payment_type: paymentType,
-      notes: notes || `Salary payment for ${salaryDate}`,
+      notes: notes || `Salary payment for work up to ${payUntilDate}`,
       created_by: createdBy,
       is_active: 1,
       created_at: new Date()
     }, { transaction });
     
-    console.log("Created payment:", {
-      payment_id: payment.expense_payment_id,
-      amount: payment.amount
-    });
+    console.log(`Created payment:`, payment.expense_payment_id);
     
     // Update expense paid amount
+    const currentPaid = parseFloat(expense.paid_amount || 0);
     const newPaidAmount = currentPaid + parseFloat(amount);
-    const isFullyPaid = newPaidAmount >= expenseAmount - 0.01;
+    const expenseAmount = parseFloat(expense.amount);
     
-    const [updatedCount] = await Expense.update(
-      { 
-        paid_amount: newPaidAmount,
-        is_paid: isFullyPaid,
-        updated_at: new Date()
-      },
-      { 
-        where: { 
-          id: expense.id // Use the auto-increment primary key 'id'
-        },
-        transaction 
-      }
-    );
-    
-    if (updatedCount === 0) {
-      throw new Error(`Failed to update expense - record with id ${expense.id} not found`);
+    // Check if new paid amount would exceed expense amount
+    if (newPaidAmount > expenseAmount + 0.01) {
+      throw new Error(
+        `Payment of ${amount} would exceed expense amount of ${expenseAmount}. ` +
+        `Current paid: ${currentPaid}`
+      );
     }
     
-    // Refresh expense to get updated values
-    expense = await Expense.findOne({
-      where: { expense_id: expense.expense_id },
-      transaction
-    });
+    const isFullyPaid = newPaidAmount >= expenseAmount - 0.01;
     
-    // Update salary record status based on payment
-    if (dailyEarnings > 0) {
-      let newStatus = 'pending';
-      if (isFullyPaid) {
-        newStatus = 'paid';
-      } else if (newPaidAmount > 0) {
-        newStatus = 'partial';
-      }
+    await expense.update({
+      paid_amount: newPaidAmount,
+      is_paid: isFullyPaid,
+      updated_at: new Date()
+    }, { transaction });
+    
+    // Update or create LoadmanSalary record for the payment date
+    try {
+      const [salaryRecord, created] = await LoadmanSalary.findOrCreate({
+        where: {
+          loadman_id: loadmanId,
+          salary_date: paymentDate,
+          is_active: 1
+        },
+        defaults: {
+          loadman_salary_id: uuidv4(),
+          loadman_id: loadmanId,
+          salary_date: paymentDate,
+          total_pickup_charges: 0,
+          total_drop_charges: 0,
+          total_handling_charges: 0,
+          total_amount: parseFloat(amount),
+          package_count: 0,
+          booking_count: 0,
+          status: isFullyPaid ? 'paid' : 'partial',
+          payment_date: paymentDate,
+          created_at: new Date(),
+          updated_at: new Date()
+        },
+        transaction
+      });
       
-      await salaryRecord.update({
-        status: newStatus,
-        payment_date: isFullyPaid ? paymentDate : null,
-        updated_at: new Date()
-      }, { transaction });
+      if (!created) {
+        // Update existing record
+        const newTotalAmount = parseFloat(salaryRecord.total_amount || 0) + parseFloat(amount);
+        await salaryRecord.update({
+          total_amount: newTotalAmount,
+          status: 'partial',
+          payment_date: paymentDate,
+          updated_at: new Date()
+        }, { transaction });
+      }
+    } catch (err) {
+      console.error("Error updating LoadmanSalary record:", err.message);
+      // Continue even if this fails - it's not critical
     }
     
     await transaction.commit();
     
-    // Get updated earnings with payment info
-    const updatedEarnings = await calculateLoadmanDailySalary(loadmanId, salaryDate, true);
+    // Calculate remaining balance
+    const remainingBalance = totalOutstanding - parseFloat(amount);
     
     return {
       success: true,
-      message: isFullyPaid ? "Loadman salary fully paid" : "Partial payment processed successfully",
+      message: remainingBalance <= 0.01 ? 
+        "All outstanding salary paid successfully" : 
+        `Partial payment of ${parseFloat(amount).toFixed(2)} processed successfully. Remaining: ${remainingBalance.toFixed(2)}`,
       loadman: {
         loadmanId: loadman.employee_id,
         loadmanName: loadman.employee_name
+      },
+      summary: {
+        payUntilDate: payUntilDate,
+        totalEarnings: totalEarnings.toFixed(2),
+        totalPaidBefore: totalPaid.toFixed(2),
+        totalOutstanding: totalOutstanding.toFixed(2),
+        amountPaid: parseFloat(amount).toFixed(2),
+        remainingBalance: remainingBalance.toFixed(2)
       },
       payment: {
         paymentId: payment.expense_payment_id,
         amount: payment.amount,
         paymentDate: payment.payment_date,
         paymentType: payment.payment_type
-      },
-      expense: {
-        expenseId: expense.expense_id,
-        amount: expense.amount,
-        paidAmount: expense.paid_amount,
-        remainingAmount: (expense.amount - expense.paid_amount).toFixed(2),
-        isFullyPaid: expense.is_paid
-      },
-      earnings: updatedEarnings
+      }
     };
     
   } catch (error) {
@@ -853,7 +913,7 @@ async function getLoadmanSalaryDetail(loadmanId, startDate, endDate) {
     
     console.log(`Found ${salaryRecords.length} salary records`);
     
-    // Get all expenses for this loadman in date range
+    // Get all expenses for this loadman in date range (by salary date)
     const expenses = await Expense.findAll({
       where: {
         employee_id: loadmanId,
@@ -963,7 +1023,7 @@ async function getLoadmanSalaryDetail(loadmanId, startDate, endDate) {
   }
 }
 
-// Get all loadmen salary summary (simplified view) - FIXED VERSION
+// Get all loadmen salary summary (simplified view) - CORRECTED VERSION
 async function getAllLoadmenSalarySummary(filters = {}) {
   try {
     const { startDate, endDate, status, search } = filters;
@@ -1005,7 +1065,7 @@ async function getAllLoadmenSalarySummary(filters = {}) {
     
     const loadmanIds = loadmen.map(l => l.employee_id);
     
-    // Get all salary records in date range - DIRECTLY from PackageLoadman to ensure accuracy
+    // Get all package assignments directly from PackageLoadman for accurate earnings
     const packageWhere = {
       loadman_id: { [Op.in]: loadmanIds },
       is_active: 1
@@ -1022,14 +1082,14 @@ async function getAllLoadmenSalarySummary(filters = {}) {
       attributes: [
         'loadman_id',
         'amount_earned',
-        'created_at',
-        'booking_package_id'
+        'created_at'
       ],
       include: [
         {
           model: BookingPackage,
           as: 'bookingPackage',
-          attributes: ['quantity']
+          attributes: ['quantity'],
+          required: false
         }
       ],
       raw: false
@@ -1037,28 +1097,7 @@ async function getAllLoadmenSalarySummary(filters = {}) {
     
     console.log(`Found ${packageAssignments.length} package assignments`);
     
-    // Get all expenses in date range
-    const expenseWhere = {
-      employee_id: { [Op.in]: loadmanIds },
-      expense_type_id: loadmanExpenseTypeId,
-      is_active: 1
-    };
-    
-    if (startDate && endDate) {
-      expenseWhere.expense_date = {
-        [Op.between]: [startDate, endDate]
-      };
-    }
-    
-    const expenses = await Expense.findAll({
-      where: expenseWhere,
-      attributes: ['employee_id', 'expense_date', 'paid_amount'],
-      raw: true
-    });
-    
-    console.log(`Found ${expenses.length} expense records`);
-    
-    // Group package assignments by loadman
+    // Group earnings by loadman from actual assignments
     const earningsByLoadman = {};
     const packagesByLoadman = {};
     const workingDaysByLoadman = {};
@@ -1080,6 +1119,29 @@ async function getAllLoadmenSalarySummary(filters = {}) {
       workingDaysByLoadman[loadmanId].add(date);
     });
     
+    console.log("Earnings by loadman from PackageLoadman:", earningsByLoadman);
+    
+    // Get all expenses for these loadmen (by salary date)
+    const expenseWhere = {
+      employee_id: { [Op.in]: loadmanIds },
+      expense_type_id: loadmanExpenseTypeId,
+      is_active: 1
+    };
+    
+    if (startDate && endDate) {
+      expenseWhere.expense_date = {
+        [Op.between]: [startDate, endDate]
+      };
+    }
+    
+    const expenses = await Expense.findAll({
+      where: expenseWhere,
+      attributes: ['employee_id', 'expense_date', 'paid_amount'],
+      raw: true
+    });
+    
+    console.log(`Found ${expenses.length} expense records`);
+    
     // Group expenses by loadman
     const paidByLoadman = {};
     expenses.forEach(expense => {
@@ -1096,6 +1158,7 @@ async function getAllLoadmenSalarySummary(filters = {}) {
     let totalPendingAll = 0;
     
     loadmen.forEach(loadman => {
+      // Use actual earnings from PackageLoadman, not from package charges
       const earnings = earningsByLoadman[loadman.employee_id] || 0;
       const paid = paidByLoadman[loadman.employee_id] || 0;
       const pending = earnings - paid;
@@ -1109,7 +1172,7 @@ async function getAllLoadmenSalarySummary(filters = {}) {
       // Determine status
       let loadmanStatus = 'no_work';
       if (earnings > 0) {
-        if (pending <= 0.01) {
+        if (pending <= 0.01 && pending >= -0.01) { // Allow for small floating point errors
           loadmanStatus = 'paid';
         } else if (paid > 0) {
           loadmanStatus = 'partial';
@@ -1118,11 +1181,17 @@ async function getAllLoadmenSalarySummary(filters = {}) {
         }
       }
       
+      // Handle overpayment case (negative pending)
+      if (pending < -0.01) {
+        loadmanStatus = 'overpaid';
+      }
+      
       // Apply status filter
       if (status && status !== 'all') {
         if (status === 'paid' && loadmanStatus !== 'paid') return;
         if (status === 'pending' && loadmanStatus !== 'pending') return;
         if (status === 'partial' && loadmanStatus !== 'partial') return;
+        if (status === 'overpaid' && loadmanStatus !== 'overpaid') return;
         if (status === 'no_work' && loadmanStatus !== 'no_work') return;
       }
       
@@ -1140,7 +1209,7 @@ async function getAllLoadmenSalarySummary(filters = {}) {
     });
     
     // Sort by pending amount (highest first)
-    resultLoadmen.sort((a, b) => parseFloat(b.totalPending) - parseFloat(a.totalPending));
+    resultLoadmen.sort((a, b) => Math.abs(parseFloat(b.totalPending)) - Math.abs(parseFloat(a.totalPending)));
     
     return {
       summary: {

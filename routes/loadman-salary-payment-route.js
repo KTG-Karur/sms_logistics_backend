@@ -7,6 +7,7 @@ const messages = require("../helpers/message");
 const loadmanSalaryPaymentService = require("../service/loadman-salary-payment-service");
 const Validator = require("fastest-validator");
 const _ = require("lodash");
+const { Op } = require("sequelize");
 
 const paymentSchema = {
   loadmanId: {
@@ -42,13 +43,13 @@ const paymentSchema = {
       stringEmpty: "Office center ID is required"
     }
   },
-  salaryDate: {
+  payUntilDate: {
     type: "string",
     optional: false,
     pattern: /^\d{4}-\d{2}-\d{2}$/,
     messages: {
-      stringEmpty: "Salary date is required",
-      stringPattern: "Salary date must be in YYYY-MM-DD format"
+      stringEmpty: "Pay until date is required",
+      stringPattern: "Pay until date must be in YYYY-MM-DD format"
     }
   },
   paymentType: {
@@ -80,6 +81,14 @@ const dateRangeSchema = {
     pattern: /^\d{4}-\d{2}-\d{2}$/,
     messages: {
       stringPattern: "End date must be in YYYY-MM-DD format"
+    }
+  },
+  upToDate: {
+    type: "string", 
+    optional: true,
+    pattern: /^\d{4}-\d{2}-\d{2}$/,
+    messages: {
+      stringPattern: "Up to date must be in YYYY-MM-DD format"
     }
   },
   status: { 
@@ -141,7 +150,7 @@ async function calculateDailySalary(req, res) {
   }
 }
 
-// Process loadman salary payment (supports partial payments)
+// Process loadman salary payment (pay all outstanding up to a date)
 async function processSalaryPayment(req, res) {
   const responseEntries = new ResponseEntry();
   const v = new Validator();
@@ -220,7 +229,7 @@ async function getSalarySummary(req, res) {
   }
 }
 
-// NEW ROUTE: Get all loadmen salary summary (simplified view)
+// Get all loadmen salary summary (simplified view)
 async function getAllLoadmenSalarySummary(req, res) {
   const responseEntries = new ResponseEntry();
   const v = new Validator();
@@ -462,7 +471,7 @@ module.exports = async function (fastify) {
     handler: calculateDailySalary,
   });
   
-  // Process loadman salary payment (supports partial payments)
+  // Process loadman salary payment (pay all outstanding up to a date)
   fastify.route({
     method: "POST",
     url: "/loadman-salary/payment",
@@ -478,7 +487,7 @@ module.exports = async function (fastify) {
     handler: getSalarySummary,
   });
   
-  // NEW ROUTE: Get all loadmen salary summary (simplified view)
+  // Get all loadmen salary summary (simplified view)
   fastify.route({
     method: "GET",
     url: "/loadman-salary/all-summary",
