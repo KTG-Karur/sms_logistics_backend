@@ -563,86 +563,89 @@ async function getLoadmanSalarySummary(filters = {}) {
   }
 }
 
-// Process loadman salary payment (pay all outstanding up to a date) - CORRECTED VERSION
+
+
+
+/**
+ * Process loadman salary payment - ALWAYS creates NEW expense and payment records
+ */
 async function processLoadmanSalaryPayment(paymentData) {
   const transaction = await sequelize.transaction();
   
   try {
-    const {
-      loadmanId,
-      paymentDate,
-      amount,
-      officeCenterId,
+    const { 
+      loadmanId, 
+      paymentDate, 
+      amount, 
+      officeCenterId, 
       payUntilDate, // Pay all outstanding salary up to this date
-      paymentType = 'cash',
-      notes = '',
-      createdBy
+      paymentType = 'cash', 
+      notes = '', 
+      createdBy 
     } = paymentData;
-    
+
     // Validate required fields
     if (!loadmanId) throw new Error("Loadman ID is required");
     if (!paymentDate) throw new Error("Payment date is required");
     if (!amount) throw new Error("Payment amount is required");
     if (!officeCenterId) throw new Error("Office center ID is required");
     if (!payUntilDate) throw new Error("Pay until date is required");
-    
+
     console.log("Processing loadman salary payment:", {
-      loadmanId,
-      paymentDate,
-      amount,
-      officeCenterId,
-      payUntilDate,
-      paymentType,
-      createdBy
+      loadmanId, paymentDate, amount, officeCenterId, payUntilDate, paymentType, createdBy
     });
-    
+
     // Get loadman expense type ID
     const loadmanExpenseTypeId = await getLoadmanExpenseTypeId();
-    
+
     // Get loadman details
     const loadman = await Employee.findOne({
-      where: { employee_id: loadmanId, is_loadman: true, is_active: 1 },
+      where: { 
+        employee_id: loadmanId, 
+        is_loadman: true, 
+        is_active: 1 
+      },
       attributes: ['employee_id', 'employee_name'],
       transaction
     });
-    
+
     if (!loadman) {
       throw new Error("Loadman not found");
     }
-    
-    // Get all package assignments for this loadman WITHIN THE DATE RANGE up to payUntilDate
+
+    // Get all package assignments for this loadman up to payUntilDate
     const packageAssignments = await PackageLoadman.findAll({
-      where: {
-        loadman_id: loadmanId,
-        created_at: {
+      where: { 
+        loadman_id: loadmanId, 
+        created_at: { 
           [Op.lte]: payUntilDate + ' 23:59:59' // Only up to the end of payUntilDate
         },
-        is_active: 1
+        is_active: 1 
       },
       attributes: [
-        'package_loadman_id',
-        'loadman_type',
-        'amount_earned',
-        'booking_package_id',
+        'package_loadman_id', 
+        'loadman_type', 
+        'amount_earned', 
+        'booking_package_id', 
         'created_at'
       ],
       include: [
-        {
-          model: BookingPackage,
-          as: 'bookingPackage',
+        { 
+          model: BookingPackage, 
+          as: 'bookingPackage', 
           attributes: ['quantity', 'handling_charge', 'pickup_charge', 'drop_charge'],
-          required: false
+          required: false 
         }
       ],
       transaction
     });
-    
+
     console.log(`Found ${packageAssignments.length} package assignments up to ${payUntilDate}`);
-    
+
     if (packageAssignments.length === 0) {
       throw new Error(`No work found for loadman up to ${payUntilDate}`);
     }
-    
+
     // Group assignments by booking_package_id to handle multiple loadmen on same package
     const packageGroups = {};
     packageAssignments.forEach(assignment => {
@@ -652,7 +655,7 @@ async function processLoadmanSalaryPayment(paymentData) {
       }
       packageGroups[packageId].push(assignment);
     });
-    
+
     // Calculate total earnings from all assignments up to payUntilDate
     let totalEarnings = 0;
     let totalPackages = 0;
@@ -660,54 +663,53 @@ async function processLoadmanSalaryPayment(paymentData) {
     packageAssignments.forEach(assignment => {
       const amountEarned = parseFloat(assignment.amount_earned || 0);
       const quantity = assignment.bookingPackage?.quantity || 1;
-      const packageId = assignment.booking_package_id;
-      const loadmenCount = packageGroups[packageId]?.length || 1;
       
       totalEarnings += amountEarned;
       totalPackages += quantity;
-      
-      // // Add handling charges if applicable
-      // if (assignment.bookingPackage?.handling_charge && parseFloat(assignment.bookingPackage.handling_charge) > 0) {
-      //   const handlingForThisPackage = (parseFloat(assignment.bookingPackage.handling_charge) * quantity) / loadmenCount;
-      //   totalEarnings += handlingForThisPackage;
-      // }
     });
-    
+
     totalEarnings = Math.round(totalEarnings * 100) / 100;
-    
     console.log(`Total earnings up to ${payUntilDate}: ${totalEarnings}`);
-    
-    // Get all expenses for this loadman up to payUntilDate
-    const expenses = await Expense.findAll({
-      where: {
-        employee_id: loadmanId,
+
+    // Get all existing expense payments for this loadman up to payUntilDate
+    // to calculate total paid amount
+    const existingExpenses = await Expense.findAll({
+      where: { 
+        employee_id: loadmanId, 
         expense_type_id: loadmanExpenseTypeId,
-        expense_date: {
-          [Op.lte]: payUntilDate
+        expense_date: { 
+          [Op.lte]: payUntilDate 
         },
-        is_active: 1
+        is_active: 1 
       },
       attributes: ['expense_id', 'expense_date', 'amount', 'paid_amount'],
+      include: [
+        {
+          model: ExpensePayment,
+          as: 'payments',
+          where: { is_active: 1 },
+          required: false,
+          attributes: ['expense_payment_id', 'amount', 'payment_date']
+        }
+      ],
       transaction
     });
-    
-    console.log(`Found ${expenses.length} expense records`);
-    
-    // Calculate total paid amount
+
+    console.log(`Found ${existingExpenses.length} existing expense records`);
+
+    // Calculate total paid amount from all previous payments
     let totalPaid = 0;
-    expenses.forEach(expense => {
+    existingExpenses.forEach(expense => {
       totalPaid += parseFloat(expense.paid_amount || 0);
     });
     totalPaid = Math.round(totalPaid * 100) / 100;
-    
     console.log(`Total paid up to ${payUntilDate}: ${totalPaid}`);
-    
+
     // Calculate outstanding amount
     const totalOutstanding = Math.max(0, totalEarnings - totalPaid);
-    
     console.log(`Total outstanding: ${totalOutstanding.toFixed(2)}`);
     console.log(`Payment amount: ${amount}`);
-    
+
     // Validate payment amount
     if (parseFloat(amount) > totalOutstanding + 0.01) {
       throw new Error(
@@ -715,52 +717,38 @@ async function processLoadmanSalaryPayment(paymentData) {
         `Maximum allowed: ${totalOutstanding.toFixed(2)}`
       );
     }
-    
+
     if (totalOutstanding <= 0.01) {
       throw new Error(`No outstanding amount for loadman up to ${payUntilDate}`);
     }
+
+    // ===== ALWAYS CREATE A NEW EXPENSE FOR THIS PAYMENT =====
+    // Generate a unique description
+    const description = notes || `Salary payment for work up to ${payUntilDate}`;
     
-    // Get the oldest unpaid date to apply payment to
-    // For simplicity, we'll create a single expense for the payment
-    // Find or create an expense for the payment date
-    let expense = await Expense.findOne({
-      where: {
-        employee_id: loadmanId,
-        expense_type_id: loadmanExpenseTypeId,
-        expense_date: paymentDate,
-        is_active: 1
-      },
-      transaction,
-      lock: transaction.LOCK
-    });
-    
-    if (!expense) {
-      // Create a new expense for this payment
-      const description = `Salary payment for work up to ${payUntilDate}`;
-      
-      expense = await Expense.create({
-        expense_id: uuidv4(),
-        expense_date: paymentDate,
-        expense_type_id: loadmanExpenseTypeId,
-        office_center_id: officeCenterId,
-        amount: parseFloat(amount), // Set amount to the payment amount
-        description: description,
-        employee_id: loadmanId,
-        paid_amount: 0,
-        is_paid: false,
-        created_by: createdBy,
-        is_active: 1,
-        created_at: new Date(),
-        updated_at: new Date()
-      }, { transaction });
-      
-      console.log(`Created expense for payment date ${paymentDate}:`, expense.expense_id);
-    }
-    
-    // Create payment record
-    const payment = await ExpensePayment.create({
+    // Create a new expense for this payment
+    const newExpense = await Expense.create({
+      expense_id: uuidv4(),
+      expense_date: paymentDate,
+      expense_type_id: loadmanExpenseTypeId,
+      office_center_id: officeCenterId,
+      amount: parseFloat(amount), // Set amount to the payment amount
+      paid_amount: 0, // Will be updated after payment
+      is_paid: false,
+      description: description,
+      employee_id: loadmanId,
+      created_by: createdBy,
+      is_active: 1,
+      created_at: new Date(),
+      updated_at: new Date()
+    }, { transaction });
+
+    console.log(`Created NEW expense for payment date ${paymentDate}:`, newExpense.expense_id);
+
+    // Create a NEW payment record linked to the new expense
+    const newPayment = await ExpensePayment.create({
       expense_payment_id: uuidv4(),
-      expense_id: expense.expense_id,
+      expense_id: newExpense.expense_id,
       payment_date: paymentDate,
       amount: parseFloat(amount),
       payment_type: paymentType,
@@ -769,37 +757,25 @@ async function processLoadmanSalaryPayment(paymentData) {
       is_active: 1,
       created_at: new Date()
     }, { transaction });
+
+    console.log(`Created NEW payment:`, newPayment.expense_payment_id);
+
+    // Update the new expense with paid amount
+    const isFullyPaid = parseFloat(amount) >= parseFloat(newExpense.amount) - 0.01;
     
-    console.log(`Created payment:`, payment.expense_payment_id);
-    
-    // Update expense paid amount
-    const currentPaid = parseFloat(expense.paid_amount || 0);
-    const newPaidAmount = currentPaid + parseFloat(amount);
-    const expenseAmount = parseFloat(expense.amount);
-    
-    // Check if new paid amount would exceed expense amount
-    if (newPaidAmount > expenseAmount + 0.01) {
-      throw new Error(
-        `Payment of ${amount} would exceed expense amount of ${expenseAmount}. ` +
-        `Current paid: ${currentPaid}`
-      );
-    }
-    
-    const isFullyPaid = newPaidAmount >= expenseAmount - 0.01;
-    
-    await expense.update({
-      paid_amount: newPaidAmount,
+    await newExpense.update({
+      paid_amount: parseFloat(amount),
       is_paid: isFullyPaid,
       updated_at: new Date()
     }, { transaction });
-    
+
     // Update or create LoadmanSalary record for the payment date
     try {
       const [salaryRecord, created] = await LoadmanSalary.findOrCreate({
-        where: {
-          loadman_id: loadmanId,
+        where: { 
+          loadman_id: loadmanId, 
           salary_date: paymentDate,
-          is_active: 1
+          is_active: 1 
         },
         defaults: {
           loadman_salary_id: uuidv4(),
@@ -809,8 +785,8 @@ async function processLoadmanSalaryPayment(paymentData) {
           total_drop_charges: 0,
           total_handling_charges: 0,
           total_amount: parseFloat(amount),
-          package_count: 0,
-          booking_count: 0,
+          package_count: totalPackages,
+          booking_count: packageAssignments.length,
           status: isFullyPaid ? 'paid' : 'partial',
           payment_date: paymentDate,
           created_at: new Date(),
@@ -818,13 +794,15 @@ async function processLoadmanSalaryPayment(paymentData) {
         },
         transaction
       });
-      
+
       if (!created) {
-        // Update existing record
+        // Update existing record - add to total amount
         const newTotalAmount = parseFloat(salaryRecord.total_amount || 0) + parseFloat(amount);
         await salaryRecord.update({
           total_amount: newTotalAmount,
-          status: 'partial',
+          package_count: salaryRecord.package_count + totalPackages,
+          booking_count: salaryRecord.booking_count + packageAssignments.length,
+          status: 'partial', // Mark as partial since we're adding
           payment_date: paymentDate,
           updated_at: new Date()
         }, { transaction });
@@ -833,17 +811,17 @@ async function processLoadmanSalaryPayment(paymentData) {
       console.error("Error updating LoadmanSalary record:", err.message);
       // Continue even if this fails - it's not critical
     }
-    
+
     await transaction.commit();
-    
-    // Calculate remaining balance
+
+    // Calculate remaining balance after this payment
     const remainingBalance = totalOutstanding - parseFloat(amount);
-    
+
     return {
       success: true,
-      message: remainingBalance <= 0.01 ? 
-        "All outstanding salary paid successfully" : 
-        `Partial payment of ${parseFloat(amount).toFixed(2)} processed successfully. Remaining: ${remainingBalance.toFixed(2)}`,
+      message: remainingBalance <= 0.01 
+        ? "All outstanding salary paid successfully" 
+        : `Partial payment of ${parseFloat(amount).toFixed(2)} processed successfully. Remaining: ${remainingBalance.toFixed(2)}`,
       loadman: {
         loadmanId: loadman.employee_id,
         loadmanName: loadman.employee_name
@@ -857,10 +835,11 @@ async function processLoadmanSalaryPayment(paymentData) {
         remainingBalance: remainingBalance.toFixed(2)
       },
       payment: {
-        paymentId: payment.expense_payment_id,
-        amount: payment.amount,
-        paymentDate: payment.payment_date,
-        paymentType: payment.payment_type
+        paymentId: newPayment.expense_payment_id,
+        expenseId: newExpense.expense_id,
+        amount: newPayment.amount,
+        paymentDate: newPayment.payment_date,
+        paymentType: newPayment.payment_type
       }
     };
     
@@ -871,7 +850,6 @@ async function processLoadmanSalaryPayment(paymentData) {
     throw new Error(error.message || messages.OPERATION_ERROR);
   }
 }
-
 // Get detailed loadman salary with payment history
 async function getLoadmanSalaryDetail(loadmanId, startDate, endDate) {
   try {
