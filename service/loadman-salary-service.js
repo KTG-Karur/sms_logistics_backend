@@ -24,7 +24,7 @@ const { v4: uuidv4 } = require('uuid');
  * Assign loadmen to packages within a trip using trip ID
  * Each assignment includes packageTypeId, loadmanId, loadmanType, and optional quantity
  */
-async function assignLoadmenToTripPackages(tripId, assignments) {
+async function assignLoadmenToTripPackages1(tripId, assignments) {
   const transaction = await sequelize.transaction();
   
   try {
@@ -276,7 +276,293 @@ async function assignLoadmenToTripPackages(tripId, assignments) {
     throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
   }
 }
+/**
+ * Assign loadmen to packages within a trip using trip ID
+ * Each assignment includes packageTypeId, loadmanId, loadmanType, and optional quantity
+ * Now properly handles multiple packages of the same type
+ */
+async function assignLoadmenToTripPackages(tripId, assignments) {
+  const transaction = await sequelize.transaction();
+  
+  try {
+    // Verify trip exists
+    const trip = await Trip.findOne({
+      where: { 
+        trip_id: tripId, 
+        is_active: 1 
+      },
+      attributes: ['trip_id', 'trip_number'],
+      transaction
+    });
 
+    if (!trip) {
+      throw new Error("Trip not found");
+    }
+
+    // Get all trip bookings for this trip
+    const tripBookings = await TripBooking.findAll({
+      where: { 
+        trip_id: tripId,
+        is_active: 1 
+      },
+      attributes: ['trip_booking_id', 'booking_id'],
+      transaction
+    });
+
+    if (tripBookings.length === 0) {
+      throw new Error("No bookings found for this trip");
+    }
+
+    const bookingIds = tripBookings.map(tb => tb.booking_id);
+    const tripBookingIds = tripBookings.map(tb => tb.trip_booking_id);
+
+    // Get all packages for these bookings
+    const bookingPackages = await BookingPackage.findAll({
+      where: { 
+        booking_id: { [Op.in]: bookingIds },
+        is_active: 1 
+      },
+      attributes: [
+        'booking_package_id',
+        'booking_id',
+        'package_type_id',
+        'quantity',
+        'pickup_charge',
+        'drop_charge',
+        'handling_charge',
+        'total_package_charge'
+      ],
+      include: [
+        { 
+          model: PackageType, 
+          as: 'packageType', 
+          attributes: ['package_type_id', 'package_type_name'] 
+        },
+        { 
+          model: Booking, 
+          as: 'booking', 
+          attributes: ['booking_id', 'booking_number'] 
+        }
+      ],
+      transaction
+    });
+
+    if (bookingPackages.length === 0) {
+      throw new Error("No packages found for this trip");
+    }
+
+    // Create a map of package type to array of packages
+    const packagesByType = {};
+    bookingPackages.forEach(bp => {
+      if (!packagesByType[bp.package_type_id]) {
+        packagesByType[bp.package_type_id] = [];
+      }
+      packagesByType[bp.package_type_id].push(bp);
+    });
+
+    // Create a map of booking_package_id to package for easy lookup
+    const packageMap = {};
+    bookingPackages.forEach(bp => {
+      packageMap[bp.booking_package_id] = bp;
+    });
+
+    // Create a map of booking_id to trip_booking_id
+    const bookingToTripBookingMap = {};
+    tripBookings.forEach(tb => {
+      bookingToTripBookingMap[tb.booking_id] = tb.trip_booking_id;
+    });
+
+    // Group loadman IDs for validation
+    const loadmanIds = [...new Set(assignments.map(a => a.loadmanId))];
+    
+    // Verify all loadmen exist and are loadmen
+    const loadmen = await Employee.findAll({
+      where: { 
+        employee_id: { [Op.in]: loadmanIds },
+        is_loadman: true,
+        is_active: 1 
+      },
+      transaction
+    });
+
+    if (loadmen.length !== loadmanIds.length) {
+      const foundIds = loadmen.map(l => l.employee_id);
+      const missingIds = loadmanIds.filter(id => !foundIds.includes(id));
+      throw new Error(`Loadmen not found or are not loadmen: ${missingIds.join(', ')}`);
+    }
+
+    // Create a map for loadmen
+    const loadmanMap = {};
+    loadmen.forEach(l => {
+      loadmanMap[l.employee_id] = l;
+    });
+
+    const results = [];
+    const errors = [];
+
+    // Process each assignment
+    for (const assignment of assignments) {
+      try {
+        const { 
+          packageTypeId, 
+          loadmanId, 
+          loadmanType,
+          quantity = 1 // Default to 1 if not provided
+        } = assignment;
+
+        // Get all packages of this type
+        const availablePackages = packagesByType[packageTypeId];
+        
+        if (!availablePackages || availablePackages.length === 0) {
+          throw new Error(`Package type ${packageTypeId} not found in this trip`);
+        }
+
+        const loadman = loadmanMap[loadmanId];
+
+        // Calculate total available quantity for this package type
+        const totalAvailableQuantity = availablePackages.reduce(
+          (sum, pkg) => sum + (pkg.quantity || 1), 0
+        );
+
+        // Validate that requested quantity doesn't exceed total available
+        if (quantity > totalAvailableQuantity) {
+          throw new Error(
+            `Quantity ${quantity} exceeds total available quantity ${totalAvailableQuantity} ` +
+            `for package type ${packageTypeId}`
+          );
+        }
+
+        // Distribute quantity across multiple packages of the same type
+        let remainingQuantity = quantity;
+        const packageAssignments = [];
+
+        // Sort packages by ID or any criteria to ensure consistent assignment
+        const sortedPackages = [...availablePackages].sort((a, b) => 
+          a.booking_package_id.localeCompare(b.booking_package_id)
+        );
+
+        for (const bookingPackage of sortedPackages) {
+          if (remainingQuantity <= 0) break;
+
+          const packageQuantity = bookingPackage.quantity || 1;
+          const assignQuantity = Math.min(remainingQuantity, packageQuantity);
+          
+          const tripBookingId = bookingToTripBookingMap[bookingPackage.booking_id];
+          
+          if (!tripBookingId) {
+            throw new Error(`No trip booking found for booking ${bookingPackage.booking_id}`);
+          }
+
+          // Calculate amount earned for this package based on assigned quantity
+          let amountEarned = 0;
+
+          if (loadmanType === 'pickup' || loadmanType === 'both') {
+            amountEarned += parseFloat(bookingPackage.pickup_charge || 0) * assignQuantity;
+          }
+          if (loadmanType === 'drop' || loadmanType === 'both') {
+            amountEarned += parseFloat(bookingPackage.drop_charge || 0) * assignQuantity;
+          }
+
+          // Check if assignment already exists for this specific package
+          const existingAssignment = await PackageLoadman.findOne({
+            where: {
+              trip_booking_id: tripBookingId,
+              booking_package_id: bookingPackage.booking_package_id,
+              loadman_id: loadmanId,
+              is_active: 1
+            },
+            transaction
+          });
+
+          let assignmentResult;
+
+          if (existingAssignment) {
+            // Update existing assignment
+            await existingAssignment.update({
+              loadman_type: loadmanType,
+              amount_earned: amountEarned,
+              updated_at: new Date()
+            }, { transaction });
+
+            assignmentResult = {
+              ...existingAssignment.toJSON(),
+              updated: true,
+              package_type_id: packageTypeId,
+              package_type_name: bookingPackage.packageType?.package_type_name,
+              booking_package_id: bookingPackage.booking_package_id,
+              booking_number: bookingPackage.booking?.booking_number,
+              trip_id: tripId,
+              trip_number: trip.trip_number,
+              assigned_quantity: assignQuantity,
+              package_total_quantity: packageQuantity,
+              amount_per_unit: amountEarned / assignQuantity,
+              loadman_name: loadman.employee_name
+            };
+          } else {
+            // Create new assignment
+            const newAssignment = await PackageLoadman.create({
+              package_loadman_id: uuidv4(),
+              trip_booking_id: tripBookingId,
+              booking_package_id: bookingPackage.booking_package_id,
+              loadman_id: loadmanId,
+              loadman_type: loadmanType,
+              amount_earned: amountEarned,
+              created_at: new Date(),
+              updated_at: new Date()
+            }, { transaction });
+
+            assignmentResult = {
+              ...newAssignment.toJSON(),
+              package_type_id: packageTypeId,
+              package_type_name: bookingPackage.packageType?.package_type_name,
+              booking_package_id: bookingPackage.booking_package_id,
+              booking_number: bookingPackage.booking?.booking_number,
+              trip_id: tripId,
+              trip_number: trip.trip_number,
+              assigned_quantity: assignQuantity,
+              package_total_quantity: packageQuantity,
+              amount_per_unit: amountEarned / assignQuantity,
+              loadman_name: loadman.employee_name
+            };
+          }
+
+          packageAssignments.push(assignmentResult);
+          remainingQuantity -= assignQuantity;
+        }
+
+        // Add all package assignments for this loadman/package type combination
+        results.push(...packageAssignments);
+
+      } catch (err) {
+        errors.push({
+          assignment,
+          error: err.message
+        });
+      }
+    }
+
+    await transaction.commit();
+
+    return {
+      success: true,
+      message: `Processed ${results.length} package assignments successfully${errors.length > 0 ? ` with ${errors.length} errors` : ''}`,
+      trip_id: tripId,
+      trip_number: trip.trip_number,
+      summary: {
+        total_assignments: assignments.length,
+        total_package_assignments: results.length,
+        successful: results.length,
+        failed: errors.length
+      },
+      results: results,
+      errors: errors.length > 0 ? errors : undefined
+    };
+    
+  } catch (error) {
+    await transaction.rollback();
+    throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
+  }
+}
 // =============================================
 // GET PACKAGE LOADMEN BY TRIP ID
 // =============================================
