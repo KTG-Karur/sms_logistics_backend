@@ -61,6 +61,7 @@ async function getOrganizationLogin(query) {
             titleReq = {
               pageId: page.pageId,
               label: page.title,
+              icon: page.iconName,
               isTitle: true,
             };
           }
@@ -85,7 +86,9 @@ async function getOrganizationLogin(query) {
                   parentChecker.children.push({
                     label: page.pageName,
                     url: page.pageUrl,
+                    pageId: page.pageId,
                     parentKey: parentChecker.label,
+                    icon: page.iconName,
                     access: o.accessPermission.join(", "),
                   });
                 } else {
@@ -101,8 +104,12 @@ async function getOrganizationLogin(query) {
                       icon: parentObject.iconName,
                       children: [
                         {
+                          pageId: page.pageId,
                           label: page.pageName,
+                          isTitle: false,
+                          icon: page.iconName,
                           url: page.pageUrl,
+                          access: o.accessPermission.join(", "),
                           parentKey: parentObject.pageName,
                           access: o.accessPermission.join(", "),
                         },
