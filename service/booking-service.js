@@ -2153,8 +2153,8 @@ async function getAllCustomersPaymentSummary(filters = {}) {
     if (status && status !== 'all') {
       filteredSummaries = customerSummaries.filter(c => {
         if (status === 'paid') return c.summary.payment_status === 'fully_paid';
-        if (status === 'pending') return c.summary.payment_status === 'pending';
-        if (status === 'partial') return c.summary.payment_status === 'partial';
+        if (status === 'pending') return( c.summary.payment_status==='pending'||c.summary.payment_status === 'partial');
+        if (status === 'partial') ( c.summary.payment_status==='pending'||c.summary.payment_status === 'partial');
         if (status === 'not_responsible') return c.summary.payment_status === 'not_responsible';
         return true;
       });
