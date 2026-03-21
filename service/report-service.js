@@ -1156,7 +1156,7 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
         },
         center: {
           id: centerId,
-          name: centerName
+          // name: centerName?centerName:""
         },
         opening_balance: {
           total: openingBalanceData.total.toFixed(2),
@@ -1164,7 +1164,7 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
           as_of_date: previousDayStr,
           ...(centerId ? { 
             center_id: centerId, 
-            center_name: centerName, 
+            // center_name: centerName?centerName:"", 
             last_updated: openingBalanceData.last_updated,
             transaction_count: openingBalanceData.transaction_count
           } : { 
@@ -1194,22 +1194,22 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
           by_expense_type: [],
           by_customer: [],
           by_center: [],
-          by_investment_center: Object.values(investmentsByCenter)
+          // by_investment_center: Object.values(investmentsByCenter)
         },
         transactions: {
           payments: [],
           expenses: [],
-          investments: openingTransactions.map(ot => ({
-            id: ot.opening_balance_id,
-            date: ot.date,
-            type: ot.in_out,
-            amount: ot.opening_balance,
-            notes: ot.notes,
-            center: ot.officeCenter ? {
-              id: ot.officeCenter.office_center_id,
-              name: ot.officeCenter.office_center_name
-            } : null
-          }))
+          // investments: openingTransactions.map(ot => ({
+          //   id: ot.opening_balance_id,
+          //   date: ot.date,
+          //   type: ot.in_out,
+          //   amount: ot.opening_balance,
+          //   notes: ot.notes,
+          //   center: ot.officeCenter ? {
+          //     id: ot.officeCenter.office_center_id,
+          //     name: ot.officeCenter.office_center_name
+          //   } : null
+          // }))
         }
       };
     }
