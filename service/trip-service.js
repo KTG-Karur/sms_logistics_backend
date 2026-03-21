@@ -923,7 +923,11 @@ async function getAvailableBookings() {
         'booking_number',
         'from_center_id',
         'to_center_id',
-        'total_amount'
+        'total_amount',
+        'paid_amount',
+        'due_amount',
+        'payment_by',
+        'payment_status'
       ],
       include: [
         {
@@ -937,15 +941,52 @@ async function getAvailableBookings() {
           attributes: ['office_center_id', 'office_center_name']
         },
         {
+          model: Customer,
+          as: 'fromCustomer',
+          attributes: ['customer_id', 'customer_name', 'customer_number']
+        },
+        {
+          model: Customer,
+          as: 'toCustomer',
+          attributes: ['customer_id', 'customer_name', 'customer_number']
+        },
+        {
           model: BookingPackage,
           as: 'packages',
-          attributes: ['package_type_id', 'quantity']
+          attributes: ['package_type_id', 'quantity', 'total_package_charge'],
+          include: [
+            {
+              model: PackageType,
+              as: 'packageType',
+              attributes: ['package_type_id', 'package_type_name']
+            }
+          ]
         }
       ],
       order: [['booking_date', 'ASC']]
     });
     
-    return bookings;
+    // Format the response to include customer names and numbers
+    const formattedBookings = bookings.map(booking => {
+      const bookingJson = booking.toJSON();
+      
+      // Add formatted customer information
+      return {
+        ...bookingJson,
+        sender: bookingJson.fromCustomer ? {
+          id: bookingJson.fromCustomer.customer_id,
+          name: bookingJson.fromCustomer.customer_name,
+          number: bookingJson.fromCustomer.customer_number
+        } : null,
+        receiver: bookingJson.toCustomer ? {
+          id: bookingJson.toCustomer.customer_id,
+          name: bookingJson.toCustomer.customer_name,
+          number: bookingJson.toCustomer.customer_number
+        } : null
+      };
+    });
+    
+    return formattedBookings;
   } catch (error) {
     throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
   }
