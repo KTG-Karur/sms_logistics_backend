@@ -83,8 +83,8 @@ module.exports = {
       },
       delivery_status: {
         allowNull: false,
-        type: Sequelize.ENUM('not_started', 'pickup_assigned', 'picked_up', 'in_transit', 'out_for_delivery', 'delivered', 'cancelled'),
-        defaultValue: 'not_started'
+        type: Sequelize.ENUM('not_delivered', 'pickup_assigned', 'picked_up', 'in_transit', 'out_for_delivery', 'delivered', 'cancelled'),
+        defaultValue: 'not_delivered'
       },
       actual_delivery_date: {
         allowNull: true,

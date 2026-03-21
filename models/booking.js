@@ -1,6 +1,7 @@
 "use strict";
 
 const { Model, UUIDV4 } = require("sequelize");
+const { Op } = require("sequelize");
 
 module.exports = (sequelize, DataTypes) => {
   class Booking extends Model {
@@ -92,14 +93,49 @@ module.exports = (sequelize, DataTypes) => {
       return `LLR${year}${month}${day}${random}`;
     }
 
-    // Generate Booking Number
-    static generateBookingNumber() {
+    // Generate Booking Number with format: BKYY + sequential number (auto-incrementing digits)
+    static async generateBookingNumber(transaction = null) {
       const date = new Date();
       const year = date.getFullYear().toString().slice(-2);
-      const month = (date.getMonth() + 1).toString().padStart(2, '0');
-      const day = date.getDate().toString().padStart(2, '0');
-      const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-      return `BK${year}${month}${day}${random}`;
+      const yearPrefix = `BK${year}`;
+      
+      // Find the last booking for this year to get the sequence number
+      const lastBooking = await Booking.findOne({
+        where: {
+          booking_number: {
+            [Op.like]: `${yearPrefix}%`
+          },
+          is_active: 1
+        },
+        order: [['booking_number', 'DESC']],
+        attributes: ['booking_number'],
+        transaction: transaction
+      });
+      
+      let sequenceNumber = 1;
+      
+      if (lastBooking && lastBooking.booking_number) {
+        // Extract the numeric part from the last booking number
+        // Format: BKYYXXXXX (where XXXXX is the sequential number)
+        const lastNumber = lastBooking.booking_number;
+        const numericPart = lastNumber.substring(4); // Remove "BKYY" prefix
+        
+        // Parse the numeric part to get the sequence number
+        const lastSeq = parseInt(numericPart, 10);
+        if (!isNaN(lastSeq)) {
+          sequenceNumber = lastSeq + 1;
+        }
+      }
+      
+      // Calculate how many digits we need (minimum 4)
+      const digitsNeeded = Math.max(4, sequenceNumber.toString().length);
+      
+      // Format sequence number with leading zeros based on current digits
+      const seqStr = sequenceNumber.toString().padStart(digitsNeeded, '0');
+      
+      const bookingNumber = `${yearPrefix}${seqStr}`;
+      
+      return bookingNumber;
     }
   }
 
@@ -229,9 +265,9 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: 'pending'
       },
       delivery_status: {
-        type: DataTypes.ENUM('not_started', 'pickup_assigned', 'picked_up', 'in_transit', 'out_for_delivery', 'delivered', 'cancelled'),
+        type: DataTypes.ENUM('not_delivered', 'pickup_assigned', 'picked_up', 'in_transit', 'out_for_delivery', 'delivered', 'cancelled'),
         allowNull: false,
-        defaultValue: 'not_started'
+        defaultValue: 'not_delivered'
       },
       actual_delivery_date: {
         type: DataTypes.DATEONLY,
@@ -277,18 +313,21 @@ module.exports = (sequelize, DataTypes) => {
       timestamps: true,
       paranoid: true,
       hooks: {
-        beforeValidate: (booking, options) => {
-          // Generate booking number if not provided
-          if (!booking.booking_number) {
-            booking.booking_number = Booking.generateBookingNumber();
+        beforeValidate: async (booking, options) => {
+          // Set booking date if not provided
+          if (!booking.booking_date) {
+            booking.booking_date = new Date().toISOString().split('T')[0];
           }
+          
           // Generate LLR number if not provided
           if (!booking.llr_number) {
             booking.llr_number = Booking.generateLLRNumber();
           }
-          // Set booking date if not provided
-          if (!booking.booking_date) {
-            booking.booking_date = new Date().toISOString().split('T')[0];
+          
+          // Generate booking number if not provided
+          if (!booking.booking_number) {
+            const transaction = options && options.transaction ? options.transaction : null;
+            booking.booking_number = await Booking.generateBookingNumber(transaction);
           }
         },
         beforeSave: (booking, options) => {

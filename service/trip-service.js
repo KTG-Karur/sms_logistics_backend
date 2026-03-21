@@ -383,7 +383,7 @@ async function createTripre(postData) {
     const bookings = await Booking.findAll({
       where: { 
         booking_id: { [Op.in]: bookingIds },
-        delivery_status: 'not_started',
+        delivery_status: 'not_delivered',
         is_active: 1 
       },
       include: [{
@@ -530,7 +530,7 @@ async function createTrip(postData) {
     const bookings = await Booking.findAll({
       where: { 
         booking_id: { [Op.in]: bookingIds },
-        delivery_status: 'not_started',
+        delivery_status: 'not_delivered',
         is_active: 1 
       },
       include: [{
@@ -704,7 +704,7 @@ async function updateTrip(tripId, putData) {
       const bookings = await Booking.findAll({
         where: { 
           booking_id: { [Op.in]: bookingIds },
-          delivery_status: 'not_started',
+          delivery_status: 'not_delivered',
           is_active: 1 
         },
         transaction
@@ -915,7 +915,7 @@ async function getAvailableBookings() {
   try {
     const bookings = await Booking.findAll({
       where: { 
-        delivery_status: 'not_started',
+        delivery_status: 'not_delivered',
         is_active: 1 
       },
       attributes: [
@@ -923,7 +923,11 @@ async function getAvailableBookings() {
         'booking_number',
         'from_center_id',
         'to_center_id',
-        'total_amount'
+        'total_amount',
+        'paid_amount',
+        'due_amount',
+        'payment_by',
+        'payment_status'
       ],
       include: [
         {
@@ -937,15 +941,52 @@ async function getAvailableBookings() {
           attributes: ['office_center_id', 'office_center_name']
         },
         {
+          model: Customer,
+          as: 'fromCustomer',
+          attributes: ['customer_id', 'customer_name', 'customer_number']
+        },
+        {
+          model: Customer,
+          as: 'toCustomer',
+          attributes: ['customer_id', 'customer_name', 'customer_number']
+        },
+        {
           model: BookingPackage,
           as: 'packages',
-          attributes: ['package_type_id', 'quantity']
+          attributes: ['package_type_id', 'quantity', 'total_package_charge'],
+          include: [
+            {
+              model: PackageType,
+              as: 'packageType',
+              attributes: ['package_type_id', 'package_type_name']
+            }
+          ]
         }
       ],
       order: [['booking_date', 'ASC']]
     });
     
-    return bookings;
+    // Format the response to include customer names and numbers
+    const formattedBookings = bookings.map(booking => {
+      const bookingJson = booking.toJSON();
+      
+      // Add formatted customer information
+      return {
+        ...bookingJson,
+        sender: bookingJson.fromCustomer ? {
+          id: bookingJson.fromCustomer.customer_id,
+          name: bookingJson.fromCustomer.customer_name,
+          number: bookingJson.fromCustomer.customer_number
+        } : null,
+        receiver: bookingJson.toCustomer ? {
+          id: bookingJson.toCustomer.customer_id,
+          name: bookingJson.toCustomer.customer_name,
+          number: bookingJson.toCustomer.customer_number
+        } : null
+      };
+    });
+    
+    return formattedBookings;
   } catch (error) {
     throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
   }
@@ -1145,7 +1186,7 @@ async function updateTripBookings(tripId, updateData) {
     
     // ===== ADD BOOKINGS =====
     if (addBookingIds.length > 0) {
-      // Verify that the bookings to add are available (not started and not in another scheduled trip)
+      // Verify that the bookings to add are available (not delivered and not in another scheduled trip)
       const existingBookingIds = existingTrip.bookings.map(b => b.booking_id);
       
       // Check which bookings are already in this trip
@@ -1158,7 +1199,7 @@ async function updateTripBookings(tripId, updateData) {
       const newBookingIds = addBookingIds.filter(id => !existingBookingIds.includes(id));
       
       if (newBookingIds.length > 0) {
-        // Check if these bookings are available (not started and not in other scheduled trips)
+        // Check if these bookings are available (not delivered and not in other scheduled trips)
         const bookingsInOtherTrips = await TripBooking.findAll({
           where: {
             booking_id: { [Op.in]: newBookingIds },
@@ -1188,11 +1229,11 @@ async function updateTripBookings(tripId, updateData) {
           errors.push(`Some bookings are already assigned to other trips: ${JSON.stringify(conflictBookings)}`);
         }
         
-        // Check if bookings are in 'not_started' status
+        // Check if bookings are in 'not_delivered' status
         const bookingsToAdd = await Booking.findAll({
           where: {
             booking_id: { [Op.in]: newBookingIds },
-            delivery_status: 'not_started',
+            delivery_status: 'not_delivered',
             is_active: 1
           },
           attributes: ['booking_id', 'booking_number', 'total_amount'],
@@ -1202,7 +1243,7 @@ async function updateTripBookings(tripId, updateData) {
         if (bookingsToAdd.length !== newBookingIds.length) {
           const foundIds = bookingsToAdd.map(b => b.booking_id);
           const notFoundIds = newBookingIds.filter(id => !foundIds.includes(id));
-          errors.push(`Bookings not found or not available (status not 'not_started'): ${notFoundIds.join(', ')}`);
+          errors.push(`Bookings not found or not available (status not 'not_delivered'): ${notFoundIds.join(', ')}`);
         }
         
         // Add valid bookings to trip

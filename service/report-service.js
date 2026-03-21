@@ -3038,7 +3038,7 @@ async function getAllBookingsWithDetails(filters = {}) {
     const totalPending = enhancedBookings.reduce((sum, b) => sum + parseFloat(b.due_amount || 0), 0);
     
     const statusCount = {
-      not_started: enhancedBookings.filter(b => b.delivery_status === 'not_started').length,
+      not_delivered: enhancedBookings.filter(b => b.delivery_status === 'not_delivered').length,
       in_transit: enhancedBookings.filter(b => ['pickup_assigned', 'picked_up', 'in_transit', 'out_for_delivery'].includes(b.delivery_status)).length,
       delivered: enhancedBookings.filter(b => b.delivery_status === 'delivered').length,
       cancelled: enhancedBookings.filter(b => b.delivery_status === 'cancelled').length
