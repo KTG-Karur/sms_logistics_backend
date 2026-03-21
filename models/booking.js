@@ -229,9 +229,9 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: 'pending'
       },
       delivery_status: {
-        type: DataTypes.ENUM('not_started', 'pickup_assigned', 'picked_up', 'in_transit', 'out_for_delivery', 'delivered', 'cancelled'),
+        type: DataTypes.ENUM('not_delivered', 'pickup_assigned', 'picked_up', 'in_transit', 'out_for_delivery', 'delivered', 'cancelled'),
         allowNull: false,
-        defaultValue: 'not_started'
+        defaultValue: 'not_delivered'
       },
       actual_delivery_date: {
         type: DataTypes.DATEONLY,

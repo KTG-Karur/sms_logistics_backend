@@ -152,7 +152,7 @@ const bookingSchema = {
 const deliveryStatusSchema = {
   deliveryStatus: {
     type: "enum",
-    values: ["not_started", "pickup_assigned", "picked_up", "in_transit", "out_for_delivery", "delivered", "cancelled"],
+    values: ["not_delivered", "pickup_assigned", "picked_up", "in_transit", "out_for_delivery", "delivered", "cancelled"],
     optional: false,
     messages: {
       stringEmpty: "Delivery status is required"
