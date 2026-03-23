@@ -605,6 +605,10 @@ async function updateBooking(bookingId, putData) {
       throw new Error(messages.DATA_NOT_FOUND);
     }
     
+    // Extract packages from putData
+    const packages = excuteMethod.packages || [];
+    delete excuteMethod.packages;
+    
     // Check for duplicate LLR number (excluding current)
     if (excuteMethod.llr_number && excuteMethod.llr_number !== existingBooking.llr_number) {
       const duplicateLLR = await Booking.findOne({
@@ -619,6 +623,33 @@ async function updateBooking(bookingId, putData) {
       }
     }
     
+    // Calculate total amount from packages if packages are being updated
+    let totalAmount = existingBooking.total_amount;
+    if (packages.length > 0) {
+      totalAmount = packages.reduce((sum, pkg) => {
+        const pkgTotal = (parseFloat(pkg.pickupCharge || 0) + 
+                         parseFloat(pkg.dropCharge || 0) + 
+                         parseFloat(pkg.handlingCharge || 0)) * 
+                         (parseInt(pkg.quantity) || 1);
+        return sum + pkgTotal;
+      }, 0);
+      
+      excuteMethod.total_amount = totalAmount;
+      
+      // Recalculate due amount if paid amount changed
+      const paidAmount = parseFloat(excuteMethod.paid_amount) || parseFloat(existingBooking.paid_amount);
+      excuteMethod.due_amount = totalAmount - paidAmount;
+      
+      // Update payment status based on new amounts
+      if (excuteMethod.due_amount <= 0) {
+        excuteMethod.payment_status = 'completed';
+      } else if (paidAmount > 0 && excuteMethod.due_amount > 0) {
+        excuteMethod.payment_status = 'partial';
+      } else {
+        excuteMethod.payment_status = 'pending';
+      }
+    }
+    
     // Update booking
     const [affectedCount] = await Booking.update(
       excuteMethod,
@@ -630,6 +661,33 @@ async function updateBooking(bookingId, putData) {
     
     if (affectedCount === 0) {
       throw new Error(messages.DATA_NOT_FOUND);
+    }
+    
+    // Update packages if provided
+    if (packages.length > 0) {
+      // Delete existing packages
+      await BookingPackage.destroy({
+        where: { booking_id: bookingId },
+        transaction
+      });
+      
+      // Create new packages
+      const packagePromises = packages.map(pkg => {
+        const pkgData = _.mapKeys(pkg, (value, key) => _.snakeCase(key));
+        pkgData.booking_id = bookingId;
+        
+        // Calculate package total
+        const quantity = parseInt(pkgData.quantity) || 1;
+        const pickupCharge = parseFloat(pkgData.pickup_charge) || 0;
+        const dropCharge = parseFloat(pkgData.drop_charge) || 0;
+        const handlingCharge = parseFloat(pkgData.handling_charge) || 0;
+        
+        pkgData.total_package_charge = (pickupCharge + dropCharge + handlingCharge) * quantity;
+        
+        return BookingPackage.create(pkgData, { transaction });
+      });
+      
+      await Promise.all(packagePromises);
     }
     
     await transaction.commit();
@@ -678,6 +736,23 @@ async function updateBooking(bookingId, putData) {
               attributes: ['package_type_id', 'package_type_name']
             }
           ]
+        },
+        {
+          model: Payment,
+          as: 'payments',
+          attributes: [
+            'payment_id',
+            'payment_number',
+            'amount',
+            'payment_date',
+            'payment_mode',
+            'payment_type',
+            'status'
+          ],
+          where: { is_active: 1 },
+          required: false,
+          limit: 10,
+          order: [['payment_date', 'DESC']]
         }
       ]
     });

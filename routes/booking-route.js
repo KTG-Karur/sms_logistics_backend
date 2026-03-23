@@ -346,35 +346,63 @@ async function updateBooking(req, res) {
       throw new Error("Booking ID is required");
     }
     
-    // Create a simplified schema for updates (only fields that can be updated)
+    // Create a more comprehensive schema for updates
     const updateSchema = {
       bookingDate: { type: "date", optional: true, convert: true },
+      fromCenterId: { type: "string", optional: true },
+      toCenterId: { type: "string", optional: true },
+      fromLocationId: { type: "string", optional: true },
+      toLocationId: { type: "string", optional: true },
+      fromCustomerId: { type: "string", optional: true },
+      toCustomerId: { type: "string", optional: true },
+      paidAmount: { type: "number", optional: true, min: 0 },
+      paymentBy: { type: "enum", values: ["sender", "receiver"], optional: true },
       specialInstructions: { type: "string", optional: true, max: 500 },
-      referenceNumber: { type: "string", optional: true, max: 100 }
+      referenceNumber: { type: "string", optional: true, max: 100 },
+      packages: { 
+        type: "array", 
+        optional: true,
+        items: {
+          type: "object",
+          props: {
+            packageTypeId: { type: "string", optional: false },
+            quantity: { type: "number", optional: false, positive: true, integer: true, min: 1 },
+            pickupCharge: { type: "number", optional: true, default: 0 },
+            dropCharge: { type: "number", optional: true, default: 0 },
+            handlingCharge: { type: "number", optional: true, default: 0 }
+          }
+        }
+      }
     };
     
-    const filteredSchema = _.pick(updateSchema, Object.keys(req.body));
+    // Filter only the fields that are present in the request
+    const fieldsToValidate = {};
+    Object.keys(updateSchema).forEach(field => {
+      if (req.body[field] !== undefined) {
+        fieldsToValidate[field] = updateSchema[field];
+      }
+    });
     
-    if (Object.keys(filteredSchema).length === 0) {
+    if (Object.keys(fieldsToValidate).length === 0) {
       throw new Error("No valid fields to update");
     }
     
-    const validationResponse = v.validate(req.body, filteredSchema);
+    const validationResponse = v.validate(req.body, fieldsToValidate);
     
     if (validationResponse != true) {
       const errorMessage = validationResponse.map(err => err.message).join(', ');
       throw new Error(errorMessage);
+    }
+    
+    responseEntries.data = await bookingServices.updateBooking(
+      req.params.bookingId,
+      req.body
+    );
+    
+    if (!responseEntries.data) {
+      responseEntries.message = messages.DATA_NOT_FOUND;
     } else {
-      responseEntries.data = await bookingServices.updateBooking(
-        req.params.bookingId,
-        req.body
-      );
-      
-      if (!responseEntries.data) {
-        responseEntries.message = messages.DATA_NOT_FOUND;
-      } else {
-        responseEntries.message = "Booking updated successfully";
-      }
+      responseEntries.message = "Booking updated successfully";
     }
   } catch (error) {
     responseEntries.error = true;
