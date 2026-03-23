@@ -100,6 +100,28 @@ async function getExpenses(query, needIsActive = true) {
         //   attributes: ['employee_id', 'employee_name', 'employee_number'],
         //   required: false
         // }
+                {
+          model: ExpensePayment,
+          as: 'payments',
+          where: { is_active: 1 },
+          required: false,
+          attributes: [
+            'expense_payment_id', 
+            'payment_date', 
+            'amount', 
+            'payment_type', 
+            'notes',
+            'created_at'
+          ],
+          include: [
+            {
+              model: Employee,
+              as: 'createdBy',
+              attributes: ['employee_id', 'employee_name']
+            }
+          ],
+          order: [['payment_date', 'DESC'], ['created_at', 'DESC']]
+        }
       ],
       order: [['expense_date', 'DESC'], ['created_at', 'DESC']],
       limit: parsedLimit,
