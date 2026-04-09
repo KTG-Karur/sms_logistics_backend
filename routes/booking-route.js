@@ -26,18 +26,6 @@ const packageSchema = {
       numberMin: "Quantity must be at least 1"
     }
   },
-  pickupCharge: {
-    type: "number",
-    optional: true,
-    number: true,
-    default: 0
-  },
-  dropCharge: {
-    type: "number",
-    optional: true,
-    number: true,
-    default: 0
-  },
   handlingCharge: {
     type: "number",
     optional: true,
@@ -141,7 +129,31 @@ const bookingSchema = {
     min: 1,
     items: {
       type: "object",
-      props: packageSchema
+      props: {
+        packageTypeId: {
+          type: "string",
+          optional: false,
+          messages: {
+            stringEmpty: "Package type is required"
+          }
+        },
+        quantity: {
+          type: "number",
+          optional: false,
+          positive: true,
+          integer: true,
+          min: 1,
+          messages: {
+            numberMin: "Quantity must be at least 1"
+          }
+        },
+        handlingCharge: {
+          type: "number",
+          optional: true,
+          number: true,
+          default: 0
+        }
+      }
     },
     messages: {
       arrayMin: "At least one package is required"
@@ -367,8 +379,6 @@ async function updateBooking(req, res) {
           props: {
             packageTypeId: { type: "string", optional: false },
             quantity: { type: "number", optional: false, positive: true, integer: true, min: 1 },
-            pickupCharge: { type: "number", optional: true, default: 0 },
-            dropCharge: { type: "number", optional: true, default: 0 },
             handlingCharge: { type: "number", optional: true, default: 0 }
           }
         }
