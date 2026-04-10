@@ -209,49 +209,49 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/office-centers",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getOfficeCenter,
   });
   
   fastify.route({
     method: "GET",
     url: "/office-centers/:officeCenterId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getOfficeCenterById,
   });
   
   fastify.route({
     method: "POST",
     url: "/office-centers",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: createOfficeCenter,
   });
   
   fastify.route({
     method: "PUT",
     url: "/office-centers/:officeCenterId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: updateOfficeCenter,
   });
   
   fastify.route({
     method: "DELETE",
     url: "/office-centers/:officeCenterId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: deleteOfficeCenter,
   });
 
    fastify.route({
     method: "GET",
     url: "/office-centers/with-locations/all",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getAllOfficeCentersWithLocations,
   });
   
   fastify.route({
     method: "GET",
     url: "/office-centers/:officeCenterId/with-locations",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getOfficeCenterWithLocationsById,
   });
 };

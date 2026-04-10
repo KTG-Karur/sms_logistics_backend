@@ -204,42 +204,42 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/salary/calculate",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: calculateSalary,
   });
   
   fastify.route({
     method: "GET",
     url: "/salary/summary",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getSalarySummary,
   });
   
   fastify.route({
     method: "GET",
     url: "/salary/employee/:employeeId/:salaryMonth",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getEmployeeSalaryDetail,
   });
   
   fastify.route({
     method: "POST",
     url: "/salary/payment",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: processSalaryPayment,
   });
   
   fastify.route({
     method: "GET",
     url: "/salary/payments",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getSalaryPayments,
   });
   
   fastify.route({
     method: "GET",
     url: "/salary/payments/:paymentId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getSalaryPaymentById,
   });
 };

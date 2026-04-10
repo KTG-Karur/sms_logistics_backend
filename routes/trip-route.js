@@ -482,42 +482,42 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/trips",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getTrips,
   });
   
   fastify.route({
     method: "GET",
     url: "/trips/available/bookings",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getAvailableBookings,
   });
   
   fastify.route({
     method: "GET",
     url: "/trips/available/vehicles",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getAvailableVehicles,
   });
   
   fastify.route({
     method: "GET",
     url: "/trips/available/drivers",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getAvailableDrivers,
   });
   
   fastify.route({
     method: "GET",
     url: "/trips/available/loadmen",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getAvailableLoadmen,
   });
   
   fastify.route({
     method: "GET",
     url: "/trips/:tripId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getTripById,
   });
 
@@ -525,7 +525,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/trips/:tripId/package-details",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getTripWithPackageDetails,
   });
   
@@ -533,7 +533,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "POST",
     url: "/trips",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: createTrip,
   });
   
@@ -541,14 +541,14 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "PUT",
     url: "/trips/:tripId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: updateTrip,
   });
   
   fastify.route({
     method: "PUT",
     url: "/trips/:tripId/status",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: updateTripStatus,
   });
   
@@ -556,14 +556,14 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "DELETE",
     url: "/trips/:tripId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: deleteTrip,
   });
 
    fastify.route({
     method: "PUT",
     url: "/trips/:tripId/bookings",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: updateTripBookings,
   });
 };

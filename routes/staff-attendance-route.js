@@ -85,35 +85,35 @@ module.exports = async function (fastify) {
   fastify.route({
     method: 'GET',
     url: '/staff-attendance',
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getStaffAttendance
   });
 
   fastify.route({
     method: 'GET',
     url: '/staff-attendance-list',
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getStaffAttendanceList
   });
 
   fastify.route({
     method: 'GET',
     url: '/staff-attendance-report',
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getStaffAttendanceReport
   });
 
   fastify.route({
     method: 'POST',
     url: '/staff-attendance',
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: createStaffAttendance
   });
 
   fastify.route({
     method: 'PUT',
     url: '/staff-attendance',
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: updateStaffAttendance
   });
 };

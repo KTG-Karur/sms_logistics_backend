@@ -572,7 +572,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "POST",
     url: "/trips/:tripId/assign-loadmen",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: assignLoadmenToTripPackages,
   });
   
@@ -580,7 +580,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/trips/:tripId/package-loadmen",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getTripPackageLoadmen,
   });
   
@@ -588,7 +588,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "POST",
     url: "/trips/:tripId/calculate-loadman-salary",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: calculateTripLoadmanSalary,
   });
   
@@ -596,7 +596,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/loadman-salaries",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getLoadmanSalaries,
   });
   
@@ -604,7 +604,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "PATCH",
     url: "/loadman-salaries/:salaryId/status",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: updateLoadmanSalaryStatus,
   });
   
@@ -612,7 +612,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/loadmen/:loadmanId/earnings-report",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getLoadmanEarningsReport,
   });
   
@@ -620,7 +620,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/loadmen/data",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getLoadmanData,
   });
   
@@ -628,7 +628,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/loadmen/:loadmanId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getLoadmanById,
   });
   
@@ -636,7 +636,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/loadmen/:loadmanId/trip-history",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getLoadmanTripHistory,
   });
   
@@ -644,7 +644,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/loadmen/:loadmanId/performance",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getLoadmanPerformance,
   });
 
@@ -652,7 +652,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/loadmen/:loadmanId/package-assignments",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getLoadmanPackageAssignments,
   });
   
@@ -660,7 +660,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/loadmen/:loadmanId/earnings-summary",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getLoadmanEarningsSummary,
   });
 };

@@ -467,7 +467,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/loadman-salary/calculate/daily/:loadmanId/:date",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: calculateDailySalary,
   });
   
@@ -475,7 +475,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "POST",
     url: "/loadman-salary/payment",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: processSalaryPayment,
   });
   
@@ -483,7 +483,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/loadman-salary/summary",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getSalarySummary,
   });
   
@@ -491,7 +491,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/loadman-salary/all-summary",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getAllLoadmenSalarySummary,
   });
   
@@ -499,7 +499,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/loadman-salary/expenses",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getExpenseSummary,
   });
   
@@ -507,7 +507,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/loadman-salary/payments",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getPaymentHistory,
   });
   
@@ -515,7 +515,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/loadman-salary/payments/:paymentId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getPaymentById,
   });
 };

@@ -170,35 +170,35 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/customers",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getCustomer,
   });
   
   fastify.route({
     method: "GET",
     url: "/customers/:customerId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getCustomerById,
   });
   
   fastify.route({
     method: "POST",
     url: "/customers",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: createCustomer,
   });
   
   fastify.route({
     method: "PUT",
     url: "/customers/:customerId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: updateCustomer,
   });
   
   fastify.route({
     method: "DELETE",
     url: "/customers/:customerId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: deleteCustomer,
   });
 };

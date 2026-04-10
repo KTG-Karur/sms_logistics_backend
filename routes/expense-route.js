@@ -304,7 +304,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/expenses",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getExpenses,
   });
 
@@ -312,7 +312,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/expenses/:expenseId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getExpenseWithDetails,
   });
 
@@ -320,7 +320,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/expenses/:expenseId/payments",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getExpensePayments,
   });
 
@@ -328,7 +328,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "POST",
     url: "/expenses",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: createExpense,
   });
 
@@ -336,7 +336,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "PUT",
     url: "/expenses/:expenseId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: updateExpense,
   });
 
@@ -344,7 +344,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "DELETE",
     url: "/expenses/:expenseId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: deleteExpense,
   });
 
@@ -352,7 +352,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "DELETE",
     url: "/expenses/:expenseId/payments/:paymentId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: deleteExpensePayment,
   });
 };

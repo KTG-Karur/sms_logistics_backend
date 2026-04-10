@@ -176,28 +176,28 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/salary-adjustments",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getSalaryAdjustment,
   });
   
   fastify.route({
     method: "POST",
     url: "/salary-adjustments",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: createSalaryAdjustment,
   });
   
   fastify.route({
     method: "PUT",
     url: "/salary-adjustments/:adjustmentId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: updateSalaryAdjustment,
   });
   
   fastify.route({
     method: "DELETE",
     url: "/salary-adjustments/:adjustmentId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: deleteSalaryAdjustment,
   });
 };
