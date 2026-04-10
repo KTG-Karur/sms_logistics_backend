@@ -1,5 +1,6 @@
 "use strict";
 const Validator = require("fastest-validator");
+const { verifyToken } = require("../middleware/auth");
 const { ResponseEntry } = require("../helpers/construct-response");
 const responseCode = require("../helpers/status-code");
 const messages = require("../helpers/message");
@@ -253,7 +254,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/expenses/:expenseId/payments/summary",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getExpensePaymentSummary,
   });
 
@@ -261,7 +262,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/expenses/:expenseId/payment",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getPaymentsByExpenseId,
   });
 
@@ -269,7 +270,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "POST",
     url: "/expense-payments",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: createExpensePayment,
   });
 
@@ -277,7 +278,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "DELETE",
     url: "/expense-payments/:paymentId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: deleteExpensePayment,
   });
 
@@ -285,7 +286,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "POST",
     url: "/expense-payments/bulk",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: bulkCreateExpensePayments,
   });
 };

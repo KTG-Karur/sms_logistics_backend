@@ -293,14 +293,14 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/reports/profit-loss/daily",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getDailyProfitLoss,
   });
   
   fastify.route({
     method: "GET",
     url: "/reports/profit-loss/range",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getDateRangeProfitLoss,
   });
   
@@ -308,7 +308,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/reports/packages",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getPackageReport,
   });
   
@@ -316,7 +316,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/reports/trips",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getTripReport,
   });
   
@@ -324,7 +324,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/reports/balance",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getBalanceReport,
   });
   
@@ -332,28 +332,28 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/dashboard/stats",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getDashboardStats,
   });
      // NEW ROUTES FOR BOOKING WITH DETAILS
   fastify.route({
     method: "GET",
     url: "/bookings/:bookingId/with-details",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getBookingWithDetails,
   });
   
   fastify.route({
     method: "GET",
     url: "/bookings/with-details/all",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getAllBookingsWithDetails,
   });
   
   fastify.route({
     method: "GET",
     url: "/bookings/:bookingId/trip-timeline",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getBookingTripTimeline,
   });
 };

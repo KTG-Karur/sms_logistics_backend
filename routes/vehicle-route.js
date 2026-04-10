@@ -418,28 +418,28 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/vehicles",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getVehicle,
   });
 
   fastify.route({
     method: "POST",
     url: "/vehicles",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: createVehicleWithUpload,
   });
 
   fastify.route({
     method: "PUT",
     url: "/vehicles/:vehicleId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: updateVehicleWithUpload,
   });
 
   fastify.route({
     method: "DELETE",
     url: "/vehicles/:vehicleId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: deleteVehicle,
   });
 };

@@ -189,42 +189,42 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/locations",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getLocation,
   });
   
   fastify.route({
     method: "GET",
     url: "/locations/:locationId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getLocationById,
   });
   
   fastify.route({
     method: "GET",
     url: "/office-centers/:officeCenterId/locations",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getLocationsByOfficeCenter,
   });
   
   fastify.route({
     method: "POST",
     url: "/locations",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: createLocation,
   });
   
   fastify.route({
     method: "PUT",
     url: "/locations/:locationId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: updateLocation,
   });
   
   fastify.route({
     method: "DELETE",
     url: "/locations/:locationId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: deleteLocation,
   });
 };

@@ -260,7 +260,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/opening-balances",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getOpeningBalance,
   });
   
@@ -268,7 +268,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "POST",
     url: "/opening-balances",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: createOpeningBalance,
   });
   
@@ -276,7 +276,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "POST",
     url: "/opening-balances/bulk",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: bulkCreateOpeningBalances,
   });
   
@@ -284,7 +284,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "PUT",
     url: "/opening-balances/:openingBalanceId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: updateOpeningBalance,
   });
   
@@ -292,7 +292,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "DELETE",
     url: "/opening-balances/:openingBalanceId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: deleteOpeningBalance,
   });
 };

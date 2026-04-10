@@ -773,14 +773,14 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/customers/:customerId/pending-payments",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getCustomerPendingPayments,
   });
 
   fastify.route({
     method: "POST",
     url: "/bookings/:bookingId/payments",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: addBookingPayment,
   });
 
@@ -788,49 +788,49 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/bookings",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getBooking,
   });
   
   fastify.route({
     method: "GET",
     url: "/bookings/:bookingId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getBookingById,
   });
   
   fastify.route({
     method: "GET",
     url: "/customers/:customerId/bookings",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getBookingsByCustomer,
   });
   
   fastify.route({
     method: "POST",
     url: "/bookings",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: createBooking,
   });
   
   fastify.route({
     method: "PUT",
     url: "/bookings/:bookingId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: updateBooking,
   });
   
   fastify.route({
     method: "PUT",
     url: "/bookings/:bookingId/delivery-status",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: updateDeliveryStatus,
   });
   
   fastify.route({
     method: "DELETE",
     url: "/bookings/:bookingId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: deleteBooking,
   });
 
@@ -838,35 +838,35 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/customers/:customerId/payments/by-date",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getCustomerPaymentsByDate,
   });
   
   fastify.route({
     method: "GET",
     url: "/customers/:customerId/bookings-payments",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getCustomerBookingsAndPayments,
   });
   
   fastify.route({
     method: "POST",
     url: "/customers/:customerId/bulk-payment",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: makeCustomerBulkPayment,
   });
 
    fastify.route({
     method: "GET",
     url: "/customer-payments/records",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getAllCustomerPaymentRecords,
   });
   
   fastify.route({
     method: "GET",
     url: "/customers/:customerId/payment-summary",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getCustomerPaymentSummary,
   });
 
@@ -874,7 +874,7 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/customers/payment-summary/all",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getAllCustomersPaymentSummary,
   });
 

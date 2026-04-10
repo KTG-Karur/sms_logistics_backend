@@ -100,21 +100,21 @@ module.exports = async function (fastify) {
     fastify.route({
         method: 'GET',
         url: '/holiday',
-        // preHandler: verifyToken,
+        preHandler: verifyToken,
         handler: getHoliday
     });
 
     fastify.route({
         method: 'POST',
         url: '/holiday',
-        // preHandler: verifyToken,
+        preHandler: verifyToken,
         handler: createHoliday
     });
 
     fastify.route({
         method: 'PUT',
         url: '/holiday/:holidayId',
-        // preHandler: verifyToken,
+        preHandler: verifyToken,
         handler: updateHoliday
     });
 
@@ -122,7 +122,7 @@ module.exports = async function (fastify) {
     fastify.route({
         method: 'DELETE',
         url: '/holiday/:holidayId',
-        // preHandler: verifyToken,
+        preHandler: verifyToken,
         handler: deleteHoliday
     });
 };

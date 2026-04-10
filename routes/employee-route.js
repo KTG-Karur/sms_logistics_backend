@@ -461,28 +461,28 @@ module.exports = async function (fastify) {
   fastify.route({
     method: "GET",
     url: "/employees",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: getEmployee,
   });
   
   fastify.route({
     method: "POST",
     url: "/employees",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: createEmployeeWithUpload,
   });
   
   fastify.route({
     method: "PUT",
     url: "/employees/:employeeId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: updateEmployeeWithUpload,
   });
   
   fastify.route({
     method: "DELETE",
     url: "/employees/:employeeId",
-    // preHandler: verifyToken,
+    preHandler: verifyToken,
     handler: deleteEmployee,
   });
 };
