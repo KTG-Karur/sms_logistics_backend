@@ -11,6 +11,8 @@ const {
   Location, 
   Customer, 
   PackageType,
+  Trip,  
+  TripBooking,
   sequelize 
 } = require("../models");
 const { v4: uuidv4 } = require('uuid');
@@ -804,16 +806,66 @@ async function deleteBooking(bookingId) {
   const transaction = await sequelize.transaction();
   
   try {
-    // Check if booking has payments
+    // First, check if booking exists and is active
+    const booking = await Booking.findOne({
+      where: { booking_id: bookingId, is_active: 1 },
+      transaction
+    });
+    
+    if (!booking) {
+      throw new Error(messages.DATA_NOT_FOUND);
+    }
+    
+    // Check if booking has any associated payments
     const paymentCount = await Payment.count({
       where: { booking_id: bookingId, is_active: 1 },
       transaction
     });
     
     if (paymentCount > 0) {
-      throw new Error("Cannot delete booking as it has associated payments");
+      throw new Error("Cannot delete booking: Payment(s) have been made against this booking");
     }
     
+    // Check if booking is associated with any trip
+    const tripBookingCount = await sequelize.models.TripBooking.count({
+      where: { booking_id: bookingId, is_active: 1 },
+      transaction
+    });
+    
+    if (tripBookingCount > 0) {
+      throw new Error("Cannot delete booking: Booking is already assigned to a trip");
+    }
+    
+    // Additional check: Also check TripBookings that might not have is_active flag
+    const tripBookingAltCount = await sequelize.models.TripBooking.count({
+      where: { booking_id: bookingId },
+      transaction
+    });
+    
+    if (tripBookingAltCount > 0) {
+      // If there are inactive trip bookings, still prevent deletion
+      const activeTrips = await sequelize.models.TripBooking.findAll({
+        where: { booking_id: bookingId },
+        include: [{
+          model: sequelize.models.Trip,
+          as: 'trip',
+          where: { is_active: 1 },
+          required: false
+        }],
+        transaction
+      });
+      
+      if (activeTrips.length > 0) {
+        throw new Error("Cannot delete booking: Booking is or was associated with an active trip");
+      }
+    }
+    
+    // Check if booking has any payment status that's not 'pending'
+    if (booking.paid_amount > 0 || booking.payment_status !== 'pending') {
+      throw new Error("Cannot delete booking: Payment has been initiated for this booking");
+    }
+    
+    // Proceed with soft deletion
     const [affectedCount] = await Booking.update(
       { is_active: 0 },
       {
@@ -1952,11 +2004,13 @@ async function getAllCustomersPaymentSummary(filters = {}) {
       status, // 'all', 'paid', 'pending', 'partial'
       sortBy = 'customer_name',
       sortOrder = 'ASC',
-      page = 1,
-      limit = 20
+      page,
+      limit
     } = filters;
     
-    const offset = (page - 1) * limit;
+    // Check if pagination is requested - ONLY if BOTH page AND limit are provided
+    const isPaginated = (page !== undefined && page !== null && page !== '' && 
+                         limit !== undefined && limit !== null && limit !== '');
     
     // Build customer where clause
     const customerWhereClause = { is_active: 1 };
@@ -1968,7 +2022,7 @@ async function getAllCustomersPaymentSummary(filters = {}) {
       ];
     }
     
-    // Get all customers with pagination
+    // Get all customers (without pagination first)
     const { count: totalCustomers, rows: customers } = await Customer.findAndCountAll({
       where: customerWhereClause,
       attributes: [
@@ -1979,15 +2033,50 @@ async function getAllCustomersPaymentSummary(filters = {}) {
         'created_at'
       ],
       order: [[sortBy, sortOrder]],
-      limit,
-      offset,
       distinct: true
     });
     
-    // Get all bookings for these customers with payment_by logic
+    if (customers.length === 0) {
+      const response = {
+        overall: {
+          total_customers: 0,
+          total_bookings: 0,
+          total_amount: "0.00",
+          total_paid: "0.00",
+          total_pending: "0.00",
+          total_responsible_amount: "0.00",
+          total_responsible_paid: "0.00",
+          total_responsible_pending: "0.00",
+          total_payments: 0,
+          total_payment_amount: "0.00"
+        },
+        status_breakdown: {
+          fully_paid: 0,
+          partial: 0,
+          pending: 0,
+          not_responsible: 0,
+          no_bookings: 0
+        },
+        customers: []
+      };
+      
+      // Only add pagination if requested
+      if (isPaginated) {
+        response.pagination = {
+          current_page: parseInt(page),
+          total_pages: 0,
+          total_customers: 0,
+          limit: parseInt(limit)
+        };
+      }
+      
+      return response;
+    }
+    
+    // Get all customer IDs
     const customerIds = customers.map(c => c.customer_id);
     
-    // Get all bookings where these customers are involved (either as sender or receiver)
+    // Get all bookings for these customers with payment_by logic
     const allBookings = await Booking.findAll({
       where: {
         [Op.or]: [
@@ -2033,19 +2122,17 @@ async function getAllCustomersPaymentSummary(filters = {}) {
         const custId = booking.from_customer_id;
         if (!customerBookings[custId]) {
           customerBookings[custId] = {
-            as_payer: { total: 0, paid: 0, pending: 0, count: 0 }, // Customer pays for these
-            as_recipient: { total: 0, paid: 0, pending: 0, count: 0 }, // Someone else pays for these
+            as_payer: { total: 0, paid: 0, pending: 0, count: 0 },
+            as_recipient: { total: 0, paid: 0, pending: 0, count: 0 },
             all: { total: 0, paid: 0, pending: 0, count: 0 }
           };
         }
         
-        // Customer is the payer for this booking
         customerBookings[custId].as_payer.total += parseFloat(booking.total_amount || 0);
         customerBookings[custId].as_payer.paid += parseFloat(booking.paid_amount || 0);
         customerBookings[custId].as_payer.pending += parseFloat(booking.due_amount || 0);
         customerBookings[custId].as_payer.count += 1;
         
-        // Update all totals
         customerBookings[custId].all.total += parseFloat(booking.total_amount || 0);
         customerBookings[custId].all.paid += parseFloat(booking.paid_amount || 0);
         customerBookings[custId].all.pending += parseFloat(booking.due_amount || 0);
@@ -2063,21 +2150,18 @@ async function getAllCustomersPaymentSummary(filters = {}) {
           };
         }
         
-        // Customer is the payer for this booking
         customerBookings[custId].as_payer.total += parseFloat(booking.total_amount || 0);
         customerBookings[custId].as_payer.paid += parseFloat(booking.paid_amount || 0);
         customerBookings[custId].as_payer.pending += parseFloat(booking.due_amount || 0);
         customerBookings[custId].as_payer.count += 1;
         
-        // Update all totals
         customerBookings[custId].all.total += parseFloat(booking.total_amount || 0);
         customerBookings[custId].all.paid += parseFloat(booking.paid_amount || 0);
         customerBookings[custId].all.pending += parseFloat(booking.due_amount || 0);
         customerBookings[custId].all.count += 1;
       }
       
-      // Case 3: Customer is involved but NOT responsible for payment
-      // Customer is sender but payment_by is 'receiver' - receiver pays
+      // Case 3: Customer is sender but payment_by is 'receiver' - receiver pays
       if (customerIds.includes(booking.from_customer_id) && booking.payment_by === 'receiver') {
         const custId = booking.from_customer_id;
         if (!customerBookings[custId]) {
@@ -2088,13 +2172,11 @@ async function getAllCustomersPaymentSummary(filters = {}) {
           };
         }
         
-        // Customer is recipient (someone else pays)
         customerBookings[custId].as_recipient.total += parseFloat(booking.total_amount || 0);
         customerBookings[custId].as_recipient.paid += parseFloat(booking.paid_amount || 0);
         customerBookings[custId].as_recipient.pending += parseFloat(booking.due_amount || 0);
         customerBookings[custId].as_recipient.count += 1;
         
-        // Update all totals
         customerBookings[custId].all.total += parseFloat(booking.total_amount || 0);
         customerBookings[custId].all.paid += parseFloat(booking.paid_amount || 0);
         customerBookings[custId].all.pending += parseFloat(booking.due_amount || 0);
@@ -2112,13 +2194,11 @@ async function getAllCustomersPaymentSummary(filters = {}) {
           };
         }
         
-        // Customer is recipient (someone else pays)
         customerBookings[custId].as_recipient.total += parseFloat(booking.total_amount || 0);
         customerBookings[custId].as_recipient.paid += parseFloat(booking.paid_amount || 0);
         customerBookings[custId].as_recipient.pending += parseFloat(booking.due_amount || 0);
         customerBookings[custId].as_recipient.count += 1;
         
-        // Update all totals
         customerBookings[custId].all.total += parseFloat(booking.total_amount || 0);
         customerBookings[custId].all.paid += parseFloat(booking.paid_amount || 0);
         customerBookings[custId].all.pending += parseFloat(booking.due_amount || 0);
@@ -2149,7 +2229,7 @@ async function getAllCustomersPaymentSummary(filters = {}) {
     });
     
     // Build customer summary
-    const customerSummaries = customers.map(customer => {
+    let customerSummaries = customers.map(customer => {
       const custId = customer.customer_id;
       const bookingData = customerBookings[custId] || { 
         as_payer: { total: 0, paid: 0, pending: 0, count: 0 },
@@ -2158,18 +2238,15 @@ async function getAllCustomersPaymentSummary(filters = {}) {
       };
       const paymentData = customerPayments[custId] || { total: 0, count: 0, last_payment_date: null };
       
-      // Calculate overall totals
       const totalBookings = bookingData.all.count;
       const totalAmount = bookingData.all.total;
       const totalPaid = bookingData.all.paid;
       const totalPending = bookingData.all.pending;
       
-      // Amount this customer is responsible for paying
       const responsibleAmount = bookingData.as_payer.total;
       const responsiblePaid = bookingData.as_payer.paid;
       const responsiblePending = bookingData.as_payer.pending;
       
-      // Determine payment status based on what this customer is responsible for
       let paymentStatus = 'no_bookings';
       if (responsibleAmount > 0) {
         if (responsiblePending <= 0) {
@@ -2180,11 +2257,9 @@ async function getAllCustomersPaymentSummary(filters = {}) {
           paymentStatus = 'pending';
         }
       } else if (totalBookings > 0) {
-        // Customer has bookings but is not responsible for payment
         paymentStatus = 'not_responsible';
       }
       
-      // Calculate payment progress
       const paymentProgress = responsibleAmount > 0 ? ((responsiblePaid / responsibleAmount) * 100).toFixed(2) : 0;
       
       return {
@@ -2224,12 +2299,11 @@ async function getAllCustomersPaymentSummary(filters = {}) {
     });
     
     // Filter by payment status if requested
-    let filteredSummaries = customerSummaries;
     if (status && status !== 'all') {
-      filteredSummaries = customerSummaries.filter(c => {
+      customerSummaries = customerSummaries.filter(c => {
         if (status === 'paid') return c.summary.payment_status === 'fully_paid';
-        if (status === 'pending') return( c.summary.payment_status==='pending'||c.summary.payment_status === 'partial');
-        if (status === 'partial') ( c.summary.payment_status==='pending'||c.summary.payment_status === 'partial');
+        if (status === 'pending') return c.summary.payment_status === 'pending' || c.summary.payment_status === 'partial';
+        if (status === 'partial') return c.summary.payment_status === 'pending' || c.summary.payment_status === 'partial';
         if (status === 'not_responsible') return c.summary.payment_status === 'not_responsible';
         return true;
       });
@@ -2237,16 +2311,16 @@ async function getAllCustomersPaymentSummary(filters = {}) {
     
     // Calculate overall statistics
     const overallStats = {
-      total_customers: filteredSummaries.length,
-      total_bookings: filteredSummaries.reduce((sum, c) => sum + c.summary.total_bookings, 0),
-      total_amount: filteredSummaries.reduce((sum, c) => sum + parseFloat(c.summary.total_amount), 0).toFixed(2),
-      total_paid: filteredSummaries.reduce((sum, c) => sum + parseFloat(c.summary.total_paid), 0).toFixed(2),
-      total_pending: filteredSummaries.reduce((sum, c) => sum + parseFloat(c.summary.total_pending), 0).toFixed(2),
-      total_responsible_amount: filteredSummaries.reduce((sum, c) => sum + parseFloat(c.summary.responsible_amount), 0).toFixed(2),
-      total_responsible_paid: filteredSummaries.reduce((sum, c) => sum + parseFloat(c.summary.responsible_paid), 0).toFixed(2),
-      total_responsible_pending: filteredSummaries.reduce((sum, c) => sum + parseFloat(c.summary.responsible_pending), 0).toFixed(2),
-      total_payments: filteredSummaries.reduce((sum, c) => sum + c.summary.payments.total_count, 0),
-      total_payment_amount: filteredSummaries.reduce((sum, c) => sum + parseFloat(c.summary.payments.total_amount), 0).toFixed(2)
+      total_customers: customerSummaries.length,
+      total_bookings: customerSummaries.reduce((sum, c) => sum + c.summary.total_bookings, 0),
+      total_amount: customerSummaries.reduce((sum, c) => sum + parseFloat(c.summary.total_amount), 0).toFixed(2),
+      total_paid: customerSummaries.reduce((sum, c) => sum + parseFloat(c.summary.total_paid), 0).toFixed(2),
+      total_pending: customerSummaries.reduce((sum, c) => sum + parseFloat(c.summary.total_pending), 0).toFixed(2),
+      total_responsible_amount: customerSummaries.reduce((sum, c) => sum + parseFloat(c.summary.responsible_amount), 0).toFixed(2),
+      total_responsible_paid: customerSummaries.reduce((sum, c) => sum + parseFloat(c.summary.responsible_paid), 0).toFixed(2),
+      total_responsible_pending: customerSummaries.reduce((sum, c) => sum + parseFloat(c.summary.responsible_pending), 0).toFixed(2),
+      total_payments: customerSummaries.reduce((sum, c) => sum + c.summary.payments.total_count, 0),
+      total_payment_amount: customerSummaries.reduce((sum, c) => sum + parseFloat(c.summary.payments.total_amount), 0).toFixed(2)
     };
     
     // Status breakdown
@@ -2258,18 +2332,33 @@ async function getAllCustomersPaymentSummary(filters = {}) {
       no_bookings: customerSummaries.filter(c => c.summary.payment_status === 'no_bookings').length
     };
     
-    return {
+    // Prepare response
+    const response = {
       overall: overallStats,
-      status_breakdown: statusBreakdown,
-      pagination: {
-        current_page: page,
-        total_pages: Math.ceil(filteredSummaries.length / limit),
-        total_customers: filteredSummaries.length,
-        limit,
-        offset
-      },
-      customers: filteredSummaries.slice(offset, offset + limit)
+      status_breakdown: statusBreakdown
     };
+    
+    // ONLY apply pagination if explicitly requested
+    if (isPaginated) {
+      const pageNum = parseInt(page);
+      const limitNum = parseInt(limit);
+      const offset = (pageNum - 1) * limitNum;
+      
+      response.pagination = {
+        current_page: pageNum,
+        total_pages: Math.ceil(customerSummaries.length / limitNum),
+        total_customers: customerSummaries.length,
+        limit: limitNum
+      };
+      
+      // Apply pagination to customers array
+      response.customers = customerSummaries.slice(offset, offset + limitNum);
+    } else {
+      // Return all customers without pagination
+      response.customers = customerSummaries;
+    }
+    
+    return response;
   } catch (error) {
     throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
   }

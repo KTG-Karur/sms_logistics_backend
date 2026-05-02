@@ -249,9 +249,10 @@ async function getAllBookingsWithDetails(req, res) {
       includePayments: req.query.includePayments !== 'false'
     };
     
-    responseEntries.data = await reportService.getAllBookingsWithDetails(filters);
+    const result = await reportService.getAllBookingsWithDetails(filters);
+    responseEntries.data = result;
     
-    if (!responseEntries.data || responseEntries.data.bookings.length === 0) {
+    if (!result.bookings || result.bookings.length === 0) {
       responseEntries.message = messages.DATA_NOT_FOUND;
     }
     

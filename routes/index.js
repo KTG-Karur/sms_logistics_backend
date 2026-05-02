@@ -34,5 +34,6 @@ module.exports = function routesPlugin(fastify, opts, next) {
   fastify.register(require("./salary-route"));
   fastify.register(require("./salary-adjustment-route"));
   fastify.register(require("./loadman-salary-payment-route"));
+  fastify.register(require("./extra-income-route"));
   next();
 };

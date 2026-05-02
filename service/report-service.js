@@ -15,6 +15,7 @@ const {
   OfficeCenter,
   Customer,Location,PackageType,TripStage,
   Employee,
+  ExtraIncome,
   sequelize 
 } = require("../models");
 
@@ -1115,8 +1116,39 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
       totalInvestment = totalNetBalance;
     }
 
+    // ===== GET EXTRA INCOME =====
+    const extraIncomeWhere = {
+      income_date: {
+        [Op.between]: [startDate, endDate]
+      },
+      is_active: 1
+    };
+    
+    if (centerId) {
+      extraIncomeWhere.office_center_id = centerId;
+    }
+    
+    const extraIncomes = await ExtraIncome.findAll({
+      where: extraIncomeWhere,
+      attributes: [
+        'extra_income_id',
+        'income_date',
+        'amount',
+        'income_type',
+        'description',
+        'office_center_id'
+      ],
+      include: [
+        {
+          model: OfficeCenter,
+          as: 'officeCenter',
+          attributes: ['office_center_id', 'office_center_name']
+        }
+      ],
+      order: [['income_date', 'ASC']]
+    });
+
     // ===== FIXED: Get all payments in date range - filter by booking's from_center_id =====
-    // First, get all bookings that match the center filter
     const bookingWhere = {
       booking_date: {
         [Op.between]: [startDate, endDate]
@@ -1125,7 +1157,7 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
     };
     
     if (centerId) {
-      bookingWhere.from_center_id = centerId; // Filter by booking's origin center
+      bookingWhere.from_center_id = centerId;
     }
     
     const relevantBookings = await Booking.findAll({
@@ -1146,8 +1178,8 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
     
     if (bookingIds.length > 0) {
       paymentsWhere.booking_id = { [Op.in]: bookingIds };
-    } else if (centerId) {
-      // No bookings found for this center, return empty result
+    } else if (centerId && bookingIds.length === 0) {
+      // Return early if no bookings found
       return {
         date_range: {
           start_date: startDate,
@@ -1156,7 +1188,6 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
         },
         center: {
           id: centerId,
-          // name: centerName?centerName:""
         },
         opening_balance: {
           total: openingBalanceData.total.toFixed(2),
@@ -1164,7 +1195,6 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
           as_of_date: previousDayStr,
           ...(centerId ? { 
             center_id: centerId, 
-            // center_name: centerName?centerName:"", 
             last_updated: openingBalanceData.last_updated,
             transaction_count: openingBalanceData.transaction_count
           } : { 
@@ -1174,8 +1204,13 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
         summary: {
           total_payments: 0,
           total_payment_amount: "0.00",
+          payment_breakdown_by_type: {},
+          payment_breakdown_by_mode: {},
           total_expense_payments: 0,
           total_expense_amount: "0.00",
+          expense_breakdown_by_payment_type: {},
+          total_extra_income: 0,
+          extra_income_breakdown_by_type: {},
           operational_profit_loss: "0.00",
           total_investments: "0.00",
           total_withdrawals: "0.00",
@@ -1194,22 +1229,11 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
           by_expense_type: [],
           by_customer: [],
           by_center: [],
-          // by_investment_center: Object.values(investmentsByCenter)
         },
         transactions: {
           payments: [],
           expenses: [],
-          // investments: openingTransactions.map(ot => ({
-          //   id: ot.opening_balance_id,
-          //   date: ot.date,
-          //   type: ot.in_out,
-          //   amount: ot.opening_balance,
-          //   notes: ot.notes,
-          //   center: ot.officeCenter ? {
-          //     id: ot.officeCenter.office_center_id,
-          //     name: ot.officeCenter.office_center_name
-          //   } : null
-          // }))
+          extra_incomes: []
         }
       };
     }
@@ -1275,7 +1299,7 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
       order: [['payment_date', 'ASC']]
     });
 
-    // ===== FIXED: Get all expense payments - filter by expense's office_center_id =====
+    // ===== Get all expense payments - filter by expense's office_center_id =====
     const expensePaymentsWhere = {
       payment_date: {
         [Op.between]: [startDate, endDate]
@@ -1298,7 +1322,7 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
           as: 'expense',
           attributes: ['expense_id', 'description', 'expense_type_id', 'office_center_id'],
           where: centerId ? { office_center_id: centerId } : {},
-          required: centerId ? true : false, // Only require if filtering by center
+          required: centerId ? true : false,
           include: [
             {
               model: sequelize.models.expence_type,
@@ -1316,7 +1340,7 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
       order: [['payment_date', 'ASC']]
     });
 
-    // Get opening balance transactions within the date range (for tracking investments/withdrawals)
+    // Get opening balance transactions within the date range
     const openingTransactionsWhere = {
       date: {
         [Op.between]: [startDate, endDate]
@@ -1347,11 +1371,112 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
       order: [['date', 'ASC']]
     });
 
+    // ===== CALCULATE PAYMENT BREAKDOWN BY PAYMENT_TYPE =====
+    const paymentBreakdownByType = {};
+    const paymentBreakdownByMode = {};
+    
+    payments.forEach(payment => {
+      const paymentType = payment.payment_type || 'full';
+      const amount = parseFloat(payment.getDataValue('amount') || 0);
+      const paymentMode = payment.payment_mode || 'cash';
+      
+      // Breakdown by payment_type (advance, partial, full, refund)
+      if (!paymentBreakdownByType[paymentType]) {
+        paymentBreakdownByType[paymentType] = {
+          type: paymentType,
+          label: getPaymentTypeLabel(paymentType),
+          total: 0,
+          count: 0,
+          amount: "0.00"
+        };
+      }
+      paymentBreakdownByType[paymentType].total += amount;
+      paymentBreakdownByType[paymentType].amount = paymentBreakdownByType[paymentType].total.toFixed(2);
+      paymentBreakdownByType[paymentType].count += 1;
+      
+      // Breakdown by payment_mode (cash, upi, card, etc.)
+      if (!paymentBreakdownByMode[paymentMode]) {
+        paymentBreakdownByMode[paymentMode] = {
+          mode: paymentMode,
+          label: getPaymentModeLabel(paymentMode),
+          total: 0,
+          count: 0,
+          amount: "0.00"
+        };
+      }
+      paymentBreakdownByMode[paymentMode].total += amount;
+      paymentBreakdownByMode[paymentMode].amount = paymentBreakdownByMode[paymentMode].total.toFixed(2);
+      paymentBreakdownByMode[paymentMode].count += 1;
+    });
+
+    // ===== CALCULATE EXTRA INCOME BREAKDOWN =====
+    const extraIncomeBreakdown = {};
+    let totalExtraIncome = 0;
+    
+    extraIncomes.forEach(income => {
+      const incomeType = income.income_type || 'cash';
+      const amount = parseFloat(income.amount || 0);
+      totalExtraIncome += amount;
+      
+      if (!extraIncomeBreakdown[incomeType]) {
+        extraIncomeBreakdown[incomeType] = {
+          type: incomeType,
+          label: getExtraIncomeTypeLabel(incomeType),
+          total: 0,
+          count: 0,
+          amount: "0.00"
+        };
+      }
+      extraIncomeBreakdown[incomeType].total += amount;
+      extraIncomeBreakdown[incomeType].amount = extraIncomeBreakdown[incomeType].total.toFixed(2);
+      extraIncomeBreakdown[incomeType].count += 1;
+    });
+
+    // ===== CALCULATE EXPENSE PAYMENT BREAKDOWN BY PAYMENT_TYPE =====
+    const expenseBreakdownByPaymentType = {};
+    const expenseBreakdownByExpenseType = {};
+    let totalExpenses = 0;
+    
+    expensePayments.forEach(expensePayment => {
+      const paymentType = expensePayment.payment_type || 'cash';
+      const amount = parseFloat(expensePayment.getDataValue('amount') || 0);
+      totalExpenses += amount;
+      
+      // Breakdown by payment_type (cash, gpay, bank_transfer, etc.)
+      if (!expenseBreakdownByPaymentType[paymentType]) {
+        expenseBreakdownByPaymentType[paymentType] = {
+          type: paymentType,
+          label: getExpensePaymentTypeLabel(paymentType),
+          total: 0,
+          count: 0,
+          amount: "0.00"
+        };
+      }
+      expenseBreakdownByPaymentType[paymentType].total += amount;
+      expenseBreakdownByPaymentType[paymentType].amount = expenseBreakdownByPaymentType[paymentType].total.toFixed(2);
+      expenseBreakdownByPaymentType[paymentType].count += 1;
+      
+      // Breakdown by expense type (fuel, salary, etc.)
+      const expenseTypeName = expensePayment.expense?.expenseType?.expence_type_name || 'Other';
+      if (!expenseBreakdownByExpenseType[expenseTypeName]) {
+        expenseBreakdownByExpenseType[expenseTypeName] = {
+          expense_type: expenseTypeName,
+          total: 0,
+          count: 0,
+          amount: "0.00"
+        };
+      }
+      expenseBreakdownByExpenseType[expenseTypeName].total += amount;
+      expenseBreakdownByExpenseType[expenseTypeName].amount = expenseBreakdownByExpenseType[expenseTypeName].total.toFixed(2);
+      expenseBreakdownByExpenseType[expenseTypeName].count += 1;
+    });
+
     // Group by date with running balance calculation
     const allDates = [...new Set([
       ...payments.map(p => p.payment_date),
       ...expensePayments.map(ep => ep.payment_date),
-      ...openingTransactions.map(ot => ot.date)
+      ...openingTransactions.map(ot => ot.date),
+      ...extraIncomes.map(ei => ei.income_date)
     ])].sort();
 
     const dailyBreakdown = {};
@@ -1363,11 +1488,12 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
       const dayPayments = payments.filter(p => p.payment_date === date);
       const dayExpenses = expensePayments.filter(ep => ep.payment_date === date);
       const dayOpeningTrans = openingTransactions.filter(ot => ot.date === date);
+      const dayExtraIncomes = extraIncomes.filter(ei => ei.income_date === date);
       
       const dayPaymentTotal = dayPayments.reduce((sum, p) => sum + parseFloat(p.getDataValue('amount') || 0), 0);
       const dayExpenseTotal = dayExpenses.reduce((sum, ep) => sum + parseFloat(ep.getDataValue('amount') || 0), 0);
+      const dayExtraIncomeTotal = dayExtraIncomes.reduce((sum, ei) => sum + parseFloat(ei.amount || 0), 0);
       
-      // Calculate opening balance adjustments (IN/OUT)
       let dayInvestmentTotal = 0;
       let dayWithdrawalTotal = 0;
       const dayInvestments = []; 
@@ -1395,18 +1521,55 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
       totalInvestments += dayInvestmentTotal;
       totalWithdrawals += dayWithdrawalTotal;
       
-      // Net change = payments - expenses + investments - withdrawals
-      const dayNet = dayPaymentTotal - dayExpenseTotal + dayInvestmentTotal - dayWithdrawalTotal;
+      const dayNet = dayPaymentTotal + dayExtraIncomeTotal - dayExpenseTotal + dayInvestmentTotal - dayWithdrawalTotal;
       const dayOpeningBalance = currentRunningBalance;
       const dayClosingBalance = dayOpeningBalance + dayNet;
+      
+      // Get daily payment breakdown by type
+      const dailyPaymentBreakdown = {};
+      dayPayments.forEach(p => {
+        const type = p.payment_type || 'full';
+        const amount = parseFloat(p.getDataValue('amount') || 0);
+        if (!dailyPaymentBreakdown[type]) {
+          dailyPaymentBreakdown[type] = 0;
+        }
+        dailyPaymentBreakdown[type] += amount;
+      });
+      
+      // Get daily expense payment breakdown by type
+      const dailyExpenseBreakdown = {};
+      dayExpenses.forEach(ep => {
+        const type = ep.payment_type || 'cash';
+        const amount = parseFloat(ep.getDataValue('amount') || 0);
+        if (!dailyExpenseBreakdown[type]) {
+          dailyExpenseBreakdown[type] = 0;
+        }
+        dailyExpenseBreakdown[type] += amount;
+      });
+      
+      // Get daily extra income breakdown
+      const dailyExtraIncomeBreakdown = {};
+      dayExtraIncomes.forEach(ei => {
+        const type = ei.income_type || 'cash';
+        const amount = parseFloat(ei.amount || 0);
+        if (!dailyExtraIncomeBreakdown[type]) {
+          dailyExtraIncomeBreakdown[type] = 0;
+        }
+        dailyExtraIncomeBreakdown[type] += amount;
+      });
       
       dailyBreakdown[date] = {
         date,
         opening_balance: dayOpeningBalance.toFixed(2),
         payments: dayPayments.length,
         payment_total: dayPaymentTotal.toFixed(2),
+        payment_breakdown: dailyPaymentBreakdown,
+        extra_income: dayExtraIncomes.length,
+        extra_income_total: dayExtraIncomeTotal.toFixed(2),
+        extra_income_breakdown: dailyExtraIncomeBreakdown,
         expenses: dayExpenses.length,
         expense_total: dayExpenseTotal.toFixed(2),
+        expense_payment_breakdown: dailyExpenseBreakdown,
         investments: dayInvestments.length,
         investment_total: dayInvestmentTotal.toFixed(2),
         withdrawals: dayWithdrawals.length,
@@ -1417,47 +1580,15 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
         withdrawal_details: dayWithdrawals
       };
       
-      // Update running balance for next day
       currentRunningBalance = dayClosingBalance;
     }
 
     // Calculate totals
     const totalPayments = payments.reduce((sum, p) => sum + parseFloat(p.getDataValue('amount') || 0), 0);
-    const totalExpenses = expensePayments.reduce((sum, ep) => sum + parseFloat(ep.getDataValue('amount') || 0), 0);
-    const operationalProfitLoss = totalPayments - totalExpenses;
+    const operationalProfitLoss = (totalPayments + totalExtraIncome) - totalExpenses;
     const netInvestmentChange = totalInvestments - totalWithdrawals;
     const totalProfitLoss = operationalProfitLoss + netInvestmentChange;
     const finalClosingBalance = runningBalance + totalProfitLoss;
-
-    // Group by expense type
-    const expenseByType = {};
-    expensePayments.forEach(ep => {
-      const typeName = ep.expense?.expenseType?.expence_type_name || 'Other';
-      if (!expenseByType[typeName]) {
-        expenseByType[typeName] = {
-          type: typeName,
-          total: 0,
-          count: 0
-        };
-      }
-      expenseByType[typeName].total += parseFloat(ep.getDataValue('amount') || 0);
-      expenseByType[typeName].count += 1;
-    });
-
-    // Group payments by mode
-    const paymentsByMode = {};
-    payments.forEach(p => {
-      const mode = p.payment_mode || 'other';
-      if (!paymentsByMode[mode]) {
-        paymentsByMode[mode] = {
-          mode,
-          total: 0,
-          count: 0
-        };
-      }
-      paymentsByMode[mode].total += parseFloat(p.getDataValue('amount') || 0);
-      paymentsByMode[mode].count += 1;
-    });
 
     // Group payments by customer
     const paymentsByCustomer = {};
@@ -1485,6 +1616,7 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
         amount: amount,
         date: p.payment_date,
         mode: p.payment_mode,
+        type: p.payment_type,
         booking_number: p.booking?.booking_number,
         booking_center: p.booking?.fromCenter?.office_center_name
       });
@@ -1493,12 +1625,12 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
     // Group payments by booking center
     const paymentsByBookingCenter = {};
     payments.forEach(p => {
-      const centerId = p.booking?.from_center_id || 'unknown';
+      const centerIdVal = p.booking?.from_center_id || 'unknown';
       const centerName = p.booking?.fromCenter?.office_center_name || 'Unknown Center';
       
-      if (!paymentsByBookingCenter[centerId]) {
-        paymentsByBookingCenter[centerId] = {
-          center_id: centerId,
+      if (!paymentsByBookingCenter[centerIdVal]) {
+        paymentsByBookingCenter[centerIdVal] = {
+          center_id: centerIdVal,
           center_name: centerName,
           total_amount: 0,
           payment_count: 0,
@@ -1506,14 +1638,13 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
         };
       }
       
-      paymentsByBookingCenter[centerId].total_amount += parseFloat(p.getDataValue('amount') || 0);
-      paymentsByBookingCenter[centerId].payment_count += 1;
+      paymentsByBookingCenter[centerIdVal].total_amount += parseFloat(p.getDataValue('amount') || 0);
+      paymentsByBookingCenter[centerIdVal].payment_count += 1;
       if (p.booking?.booking_id) {
-        paymentsByBookingCenter[centerId].bookings.add(p.booking.booking_id);
+        paymentsByBookingCenter[centerIdVal].bookings.add(p.booking.booking_id);
       }
     });
 
-    // Convert Set to count for each center
     Object.values(paymentsByBookingCenter).forEach(center => {
       center.unique_bookings = center.bookings.size;
       delete center.bookings;
@@ -1588,26 +1719,44 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
         })
       },
       summary: {
+        // Payment Summary with breakdown
         total_payments: payments.length,
         total_payment_amount: totalPayments.toFixed(2),
+        payment_breakdown_by_type: Object.values(paymentBreakdownByType),
+        payment_breakdown_by_mode: Object.values(paymentBreakdownByMode),
+        
+        // Extra Income Summary with breakdown
+        total_extra_income_count: extraIncomes.length,
+        total_extra_income_amount: totalExtraIncome.toFixed(2),
+        extra_income_breakdown_by_type: Object.values(extraIncomeBreakdown),
+        
+        // Expense Summary with breakdown
         total_expense_payments: expensePayments.length,
         total_expense_amount: totalExpenses.toFixed(2),
+        expense_breakdown_by_payment_type: Object.values(expenseBreakdownByPaymentType),
+        expense_breakdown_by_expense_type: Object.values(expenseBreakdownByExpenseType),
+        
+        // Profit/Loss Summary
+        total_income: (totalPayments + totalExtraIncome).toFixed(2),
         operational_profit_loss: operationalProfitLoss.toFixed(2),
         total_investments: totalInvestments.toFixed(2),
         total_withdrawals: totalWithdrawals.toFixed(2),
         net_investment_change: netInvestmentChange.toFixed(2),
         total_profit_loss: totalProfitLoss.toFixed(2),
         profit_loss_status: totalProfitLoss >= 0 ? 'profit' : 'loss',
+        
+        // Closing balance
         closing_balance: finalClosingBalance.toFixed(2),
         closing_balance_as_of: endDate,
+        
+        // Additional metrics
         unique_customers: Object.keys(paymentsByCustomer).length,
         centers_involved: Object.keys(paymentsByBookingCenter).length,
         days_in_range: allDates.length
       },
       breakdown: {
         daily: Object.values(dailyBreakdown),
-        by_payment_mode: Object.values(paymentsByMode),
-        by_expense_type: Object.values(expenseByType),
+        by_expense_type: Object.values(expenseBreakdownByExpenseType),
         by_customer: Object.values(paymentsByCustomer),
         by_booking_center: Object.values(paymentsByBookingCenter),
         by_investment_center: Object.values(investmentsByCenter)
@@ -1618,8 +1767,10 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
           payment_number: p.payment_number,
           date: p.payment_date,
           amount: p.getDataValue('amount'),
-          mode: p.payment_mode,
-          type: p.payment_type,
+          payment_mode: p.payment_mode,
+          payment_mode_label: getPaymentModeLabel(p.payment_mode),
+          payment_type: p.payment_type,
+          payment_type_label: getPaymentTypeLabel(p.payment_type),
           description: p.description,
           collection_center: p.collectionCenter ? {
             id: p.collectionCenter.office_center_id,
@@ -1648,14 +1799,28 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
         expenses: expensePayments.map(ep => ({
           expense_payment_id: ep.expense_payment_id,
           date: ep.payment_date,
-          type: ep.expense?.expenseType?.expence_type_name,
+          expense_type: ep.expense?.expenseType?.expence_type_name,
+          expense_type_id: ep.expense?.expense_type_id,
           amount: ep.getDataValue('amount'),
           description: ep.expense?.description,
           notes: ep.notes,
           payment_type: ep.payment_type,
+          payment_type_label: getExpensePaymentTypeLabel(ep.payment_type),
           center: ep.expense?.officeCenter ? {
             id: ep.expense.officeCenter.office_center_id,
             name: ep.expense.officeCenter.office_center_name
+          } : null
+        })),
+        extra_incomes: extraIncomes.map(ei => ({
+          extra_income_id: ei.extra_income_id,
+          date: ei.income_date,
+          amount: ei.amount,
+          income_type: ei.income_type,
+          income_type_label: getExtraIncomeTypeLabel(ei.income_type),
+          description: ei.description,
+          center: ei.officeCenter ? {
+            id: ei.officeCenter.office_center_id,
+            name: ei.officeCenter.office_center_name
           } : null
         })),
         investments: openingTransactions.map(ot => ({
@@ -1675,6 +1840,51 @@ async function getDateRangeProfitLoss(startDate, endDate, centerId = null) {
     console.error("Error in getDateRangeProfitLoss:", error);
     throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
   }
+}
+
+// Helper functions for labels
+function getPaymentTypeLabel(type) {
+  const labels = {
+    'advance': 'Advance Payment',
+    'partial': 'Partial Payment',
+    'full': 'Full Payment',
+    'refund': 'Refund'
+  };
+  return labels[type] || type;
+}
+
+function getPaymentModeLabel(mode) {
+  const labels = {
+    'cash': 'Cash',
+    'card': 'Card',
+    'upi': 'UPI',
+    'bank_transfer': 'Bank Transfer',
+    'cheque': 'Cheque',
+    'wallet': 'Wallet'
+  };
+  return labels[mode] || mode;
+}
+
+function getExpensePaymentTypeLabel(type) {
+  const labels = {
+    'cash': 'Cash',
+    'gpay': 'GPay',
+    'bank_transfer': 'Bank Transfer',
+    'cheque': 'Cheque',
+    'other': 'Other'
+  };
+  return labels[type] || type;
+}
+
+function getExtraIncomeTypeLabel(type) {
+  const labels = {
+    'cash': 'Cash',
+    'upi': 'UPI',
+    'bank_transfer': 'Bank Transfer',
+    'cheque': 'Cheque',
+    'other': 'Other'
+  };
+  return labels[type] || type;
 }
 
 // =============================================
@@ -2792,9 +3002,6 @@ async function getBookingWithDetails(bookingId, options = {}) {
   }
 }
 
-/**
- * Get all bookings with optional filters and include trip/driver/payment details
- */
 async function getAllBookingsWithDetails(filters = {}) {
   try {
     const {
@@ -2806,13 +3013,17 @@ async function getAllBookingsWithDetails(filters = {}) {
       paymentStatus,
       tripStatus,
       search,
-      page = 1,
-      limit = 20,
+      page,
+      limit,
       includeTrip = true,
       includePayments = true
     } = filters;
     
-    const offset = (page - 1) * limit;
+    // Check if pagination is requested
+    const isPaginated = page !== undefined && limit !== undefined;
+    const pageNum = isPaginated ? parseInt(page) : 1;
+    const limitNum = isPaginated ? parseInt(limit) : null;
+    const offset = isPaginated ? (pageNum - 1) * limitNum : 0;
     
     // Build where clause
     const whereClause = { is_active: 1 };
@@ -2861,7 +3072,7 @@ async function getAllBookingsWithDetails(filters = {}) {
       ];
     }
     
-    // Base include
+    // Complete include with all relations
     const include = [
       {
         model: OfficeCenter,
@@ -2872,6 +3083,16 @@ async function getAllBookingsWithDetails(filters = {}) {
         model: OfficeCenter,
         as: 'toCenter',
         attributes: ['office_center_id', 'office_center_name']
+      },
+      {
+        model: Location,
+        as: 'fromLocation',
+        attributes: ['location_id', 'location_name']
+      },
+      {
+        model: Location,
+        as: 'toLocation',
+        attributes: ['location_id', 'location_name']
       },
       {
         model: Customer,
@@ -2892,6 +3113,9 @@ async function getAllBookingsWithDetails(filters = {}) {
           'booking_package_id',
           'package_type_id',
           'quantity',
+          'pickup_charge',
+          'drop_charge',
+          'handling_charge',
           'total_package_charge'
         ],
         include: [
@@ -2904,8 +3128,29 @@ async function getAllBookingsWithDetails(filters = {}) {
       }
     ];
     
-    // Get all bookings
-    const { count, rows: bookings } = await Booking.findAndCountAll({
+    // Add payments include if requested
+    if (includePayments) {
+      include.push({
+        model: Payment,
+        as: 'payments',
+        attributes: [
+          'payment_id',
+          'payment_number',
+          'amount',
+          'payment_date',
+          'payment_mode',
+          'payment_type',
+          'status'
+        ],
+        where: { is_active: 1 },
+        required: false,
+        limit: 10,
+        order: [['payment_date', 'DESC']]
+      });
+    }
+    
+    // Get all matching bookings
+    const { count: totalCount, rows: allBookings } = await Booking.findAndCountAll({
       where: whereClause,
       attributes: [
         'booking_id',
@@ -2914,161 +3159,192 @@ async function getAllBookingsWithDetails(filters = {}) {
         'booking_date',
         'from_center_id',
         'to_center_id',
+        'from_location_id',
+        'to_location_id',
+        'from_customer_id',
+        'to_customer_id',
         'total_amount',
         'paid_amount',
         'due_amount',
         'payment_by',
         'payment_status',
         'delivery_status',
-        'created_at'
+        'actual_delivery_date',
+        'special_instructions',
+        'reference_number',
+        'is_active',
+        'created_at',
+        'updated_at'
       ],
       include,
       order: [['booking_date', 'DESC'], ['created_at', 'DESC']],
-      limit,
-      offset,
       distinct: true
     });
     
-    // Get all trip assignments for these bookings
-    const bookingIds = bookings.map(b => b.booking_id);
-    
-    const tripBookings = await TripBooking.findAll({
-      where: {
-        booking_id: { [Op.in]: bookingIds },
-        is_active: 1
-      },
-      include: [
-        {
-          model: Trip,
-          as: 'trip',
-          attributes: [
-            'trip_id',
-            'trip_number',
-            'trip_date',
-            'status',
-            'vehicle_id',
-            'driver_id'
-          ],
-          include: [
-            {
-              model: Vehicle,
-              as: 'vehicle',
-              attributes: ['vehicle_id', 'vehicle_number_plate']
-            },
-            {
-              model: Employee,
-              as: 'driver',
-              attributes: ['employee_id', 'employee_name']
-            }
-          ]
-        }
-      ]
-    });
-    
-    // Create a map of booking to trip
-    const bookingTripMap = {};
-    tripBookings.forEach(tb => {
-      bookingTripMap[tb.booking_id] = tb.trip;
-    });
-    
-    // Get payments if requested
-    let paymentsByBooking = {};
-    if (includePayments) {
-      const payments = await Payment.findAll({
-        where: {
-          booking_id: { [Op.in]: bookingIds },
-          is_active: 1,
-          status: 'completed'
+    if (allBookings.length === 0) {
+      return {
+        summary: {
+          total_bookings: 0,
+          total_amount: "0.00",
+          total_paid: "0.00",
+          total_pending: "0.00",
+          payment_progress: "0.00",
+          by_status: {
+            not_delivered: 0,
+            in_transit: 0,
+            delivered: 0,
+            cancelled: 0
+          },
+          by_trip_status: {
+            assigned: 0,
+            not_assigned: 0
+          }
         },
-        attributes: [
-          'payment_id',
-          'payment_number',
-          'booking_id',
-          'amount',
-          'payment_date',
-          'payment_mode'
-        ],
-        order: [['payment_date', 'DESC']]
+        pagination: isPaginated ? {
+          current_page: pageNum,
+          total_pages: 0,
+          total_records: 0,
+          limit: limitNum
+        } : null,
+        bookings: []
+      };
+    }
+    
+    // Get all bookings IDs
+    const allBookingIds = allBookings.map(b => b.booking_id);
+    
+    // Get all trip assignments for these bookings
+    let bookingTripMap = {};
+    if (includeTrip) {
+      const tripBookings = await TripBooking.findAll({
+        where: {
+          booking_id: { [Op.in]: allBookingIds },
+          is_active: 1
+        },
+        include: [
+          {
+            model: Trip,
+            as: 'trip',
+            attributes: [
+              'trip_id',
+              'trip_number',
+              'trip_date',
+              'status',
+              'vehicle_id',
+              'driver_id'
+            ],
+            include: [
+              {
+                model: Vehicle,
+                as: 'vehicle',
+                attributes: ['vehicle_id', 'vehicle_number_plate']
+              },
+              {
+                model: Employee,
+                as: 'driver',
+                attributes: ['employee_id', 'employee_name']
+              }
+            ]
+          }
+        ]
       });
       
-      // Group payments by booking
-      payments.forEach(payment => {
-        if (!paymentsByBooking[payment.booking_id]) {
-          paymentsByBooking[payment.booking_id] = [];
-        }
-        paymentsByBooking[payment.booking_id].push(payment);
+      // Create a map of booking to trip
+      tripBookings.forEach(tb => {
+        bookingTripMap[tb.booking_id] = tb.trip;
       });
     }
     
-    // Filter by trip status if requested
-    let filteredBookings = bookings;
-    if (tripStatus && includeTrip) {
-      filteredBookings = bookings.filter(booking => {
-        const trip = bookingTripMap[booking.booking_id];
-        if (!trip) return tripStatus === 'not_assigned';
-        return trip.status === tripStatus;
-      });
-    }
-    
-    // Enhance bookings with trip and payment info
-    const enhancedBookings = filteredBookings.map(booking => {
+    // Enhance all bookings with trip info
+    const enhancedAllBookings = allBookings.map(booking => {
       const bookingJson = booking.toJSON();
       
       if (includeTrip) {
         bookingJson.trip = bookingTripMap[booking.booking_id] || null;
       }
       
-      if (includePayments) {
-        bookingJson.payments = paymentsByBooking[booking.booking_id] || [];
-        
-        // Add payment summary
+      // Calculate payment summary if payments are included
+      if (includePayments && bookingJson.payments) {
         const totalPayments = bookingJson.payments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
         bookingJson.payment_summary = {
           count: bookingJson.payments.length,
           total: totalPayments.toFixed(2)
+        };
+      } else if (includePayments && !bookingJson.payments) {
+        bookingJson.payments = [];
+        bookingJson.payment_summary = {
+          count: 0,
+          total: "0.00"
         };
       }
       
       return bookingJson;
     });
     
-    // Calculate summary statistics
-    const totalAmount = enhancedBookings.reduce((sum, b) => sum + parseFloat(b.total_amount || 0), 0);
-    const totalPaid = enhancedBookings.reduce((sum, b) => sum + parseFloat(b.paid_amount || 0), 0);
-    const totalPending = enhancedBookings.reduce((sum, b) => sum + parseFloat(b.due_amount || 0), 0);
+    // Filter by trip status if requested (BEFORE pagination)
+    let filteredBookings = enhancedAllBookings;
+    if (tripStatus && includeTrip) {
+      filteredBookings = enhancedAllBookings.filter(booking => {
+        const trip = booking.trip;
+        if (!trip) return tripStatus === 'not_assigned';
+        return trip.status === tripStatus;
+      });
+    }
+    
+    // Calculate total records for pagination or full data
+    const totalFilteredRecords = filteredBookings.length;
+    
+    // Apply pagination ONLY if requested
+    let paginatedBookings = filteredBookings;
+    if (isPaginated) {
+      paginatedBookings = filteredBookings.slice(offset, offset + limitNum);
+    }
+    
+    // Calculate summary statistics based on filtered bookings
+    const totalAmount = filteredBookings.reduce((sum, b) => sum + parseFloat(b.total_amount || 0), 0);
+    const totalPaid = filteredBookings.reduce((sum, b) => sum + parseFloat(b.paid_amount || 0), 0);
+    const totalPending = filteredBookings.reduce((sum, b) => sum + parseFloat(b.due_amount || 0), 0);
     
     const statusCount = {
-      not_delivered: enhancedBookings.filter(b => b.delivery_status === 'not_delivered').length,
-      in_transit: enhancedBookings.filter(b => ['pickup_assigned', 'picked_up', 'in_transit', 'out_for_delivery'].includes(b.delivery_status)).length,
-      delivered: enhancedBookings.filter(b => b.delivery_status === 'delivered').length,
-      cancelled: enhancedBookings.filter(b => b.delivery_status === 'cancelled').length
+      not_delivered: filteredBookings.filter(b => b.delivery_status === 'not_delivered').length,
+      in_transit: filteredBookings.filter(b => ['pickup_assigned', 'picked_up', 'in_transit', 'out_for_delivery'].includes(b.delivery_status)).length,
+      delivered: filteredBookings.filter(b => b.delivery_status === 'delivered').length,
+      cancelled: filteredBookings.filter(b => b.delivery_status === 'cancelled').length
     };
     
     const tripStatusCount = {
-      assigned: enhancedBookings.filter(b => b.trip).length,
-      not_assigned: enhancedBookings.filter(b => !b.trip).length
+      assigned: filteredBookings.filter(b => b.trip && b.trip !== null).length,
+      not_assigned: filteredBookings.filter(b => !b.trip).length
     };
     
-    return {
+    // Prepare response object
+    const response = {
       summary: {
-        total_bookings: enhancedBookings.length,
+        total_bookings: filteredBookings.length,
         total_amount: totalAmount.toFixed(2),
         total_paid: totalPaid.toFixed(2),
         total_pending: totalPending.toFixed(2),
-        payment_progress: totalAmount > 0 ? ((totalPaid / totalAmount) * 100).toFixed(2) : 0,
+        payment_progress: totalAmount > 0 ? ((totalPaid / totalAmount) * 100).toFixed(2) : "0.00",
         by_status: statusCount,
         by_trip_status: tripStatusCount
       },
-      pagination: {
-        current_page: page,
-        total_pages: Math.ceil(filteredBookings.length / limit),
-        total_records: filteredBookings.length,
-        limit
-      },
-      bookings: enhancedBookings
+      bookings: paginatedBookings
     };
     
+    // Add pagination info only if pagination was requested
+    if (isPaginated) {
+      response.pagination = {
+        current_page: pageNum,
+        total_pages: Math.ceil(totalFilteredRecords / limitNum),
+        total_records: totalFilteredRecords,
+        limit: limitNum
+      };
+    }
+    
+    return response;
+    
   } catch (error) {
+    console.error('Error in getAllBookingsWithDetails:', error);
     throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
   }
 }

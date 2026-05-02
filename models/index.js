@@ -5,7 +5,7 @@ const path = require("path");
 const Sequelize = require("sequelize");
 const process = require("process");
 const basename = path.basename(__filename);
-const env = "production"; // production || development
+const env = "development1"; // production || development
 const config = require(__dirname + "/../config/config.json")[env];
 const db = {};
 
@@ -65,6 +65,7 @@ db.TripLoadman = require("./trip-loadman")(sequelize, Sequelize.DataTypes);
 db.PackageLoadman = require("./package-loadman")(sequelize, Sequelize.DataTypes);
 db.LoadmanSalary = require("./loadman-salary")(sequelize, Sequelize.DataTypes);
 db.SalaryAdjustment = require("./salary-adjustment")(sequelize, Sequelize.DataTypes);
+db.ExtraIncome = require("./extra-income")(sequelize, Sequelize.DataTypes);
 
 db.Customer = require("./customer")(sequelize, Sequelize.DataTypes); 
 db.OfficeCenter = require("./office-center")(sequelize, Sequelize.DataTypes); 

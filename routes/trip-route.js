@@ -433,12 +433,21 @@ async function updateTripBookings(req, res) {
       throw new Error(errorMessage);
     }
     
-    responseEntries.data = await tripServices.updateTripBookings(
+    const result = await tripServices.updateTripBookings(
       req.params.tripId,
       req.body
     );
     
-    responseEntries.message = "Trip bookings updated successfully";
+    responseEntries.data = result;
+    responseEntries.error = !result.success;
+    responseEntries.message = result.message;
+    
+    if (!result.success) {
+      responseEntries.code = responseCode.BAD_REQUEST;
+      res.status(responseCode.BAD_REQUEST);
+    } else {
+      res.status(responseCode.OK);
+    }
     
   } catch (error) {
     responseEntries.error = true;

@@ -94,13 +94,7 @@ async function getExpenses(query, needIsActive = true) {
           where: needIsActive ? { is_active: 1 } : {},
           required: false
         },
-        // {
-        //   model: Employee,
-        //   as: 'createdBy',
-        //   attributes: ['employee_id', 'employee_name', 'employee_number'],
-        //   required: false
-        // }
-                {
+        {
           model: ExpensePayment,
           as: 'payments',
           where: { is_active: 1 },
@@ -129,16 +123,75 @@ async function getExpenses(query, needIsActive = true) {
       distinct: true
     });
 
+    // Enhance each expense with payment breakdown by type
+    const enhancedRows = rows.map(expense => {
+      const expenseJson = expense.toJSON();
+      const payments = expenseJson.payments || [];
+      
+      // Calculate payment breakdown by type
+      const paymentBreakdown = {};
+      let totalPaidFromPayments = 0;
+      
+      payments.forEach(payment => {
+        const paymentType = payment.payment_type || 'unknown';
+        const amount = parseFloat(payment.amount) || 0;
+        
+        if (!paymentBreakdown[paymentType]) {
+          paymentBreakdown[paymentType] = {
+            total: 0,
+            count: 0,
+            payments: []
+          };
+        }
+        
+        paymentBreakdown[paymentType].total += amount;
+        paymentBreakdown[paymentType].count += 1;
+        paymentBreakdown[paymentType].payments.push(payment);
+        
+        totalPaidFromPayments += amount;
+      });
+      
+      // Add payment breakdown to the expense
+      expenseJson.payment_breakdown = paymentBreakdown;
+      
+      // Also add a summary of payments by type
+      expenseJson.payment_summary_by_type = Object.keys(paymentBreakdown).map(type => ({
+        payment_type: type,
+        total_amount: paymentBreakdown[type].total.toFixed(2),
+        count: paymentBreakdown[type].count,
+        payment_type_label: getPaymentTypeLabel(type)
+      }));
+      
+      // Keep original payments array for backward compatibility
+      expenseJson.payments = payments;
+      
+      return expenseJson;
+    });
+
     return {
       total: count,
       page: parseInt(page),
       limit: parsedLimit,
       totalPages: Math.ceil(count / parsedLimit),
-      data: rows
+      data: enhancedRows
     };
   } catch (error) {
     throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
   }
+}
+
+/**
+ * Helper function to get payment type label
+ */
+function getPaymentTypeLabel(paymentType) {
+  const labels = {
+    'cash': 'Cash',
+    'gpay': 'Google Pay',
+    'bank_transfer': 'Bank Transfer',
+    'cheque': 'Cheque',
+    'other': 'Other'
+  };
+  return labels[paymentType] || paymentType;
 }
 
 /**

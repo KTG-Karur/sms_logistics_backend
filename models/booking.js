@@ -93,47 +93,66 @@ module.exports = (sequelize, DataTypes) => {
       return `LLR${year}${month}${day}${random}`;
     }
 
-    // Generate Booking Number with format: BKYY + sequential number (auto-incrementing digits)
+   // Generate Booking Number with format: BKYY + sequential number (auto-incrementing digits)
     static async generateBookingNumber(transaction = null) {
       const date = new Date();
       const year = date.getFullYear().toString().slice(-2);
       const yearPrefix = `BK${year}`;
       
-      // Find the last booking for this year to get the sequence number
+      // Find the last booking for this year (including inactive ones to prevent duplicates)
       const lastBooking = await Booking.findOne({
         where: {
           booking_number: {
             [Op.like]: `${yearPrefix}%`
-          },
-          is_active: 1
+          }
+          // Remove is_active filter - check all bookings including inactive
         },
         order: [['booking_number', 'DESC']],
         attributes: ['booking_number'],
+        paranoid: false, // Include soft-deleted records
         transaction: transaction
       });
       
       let sequenceNumber = 1;
       
       if (lastBooking && lastBooking.booking_number) {
-        // Extract the numeric part from the last booking number
-        // Format: BKYYXXXXX (where XXXXX is the sequential number)
-        const lastNumber = lastBooking.booking_number;
-        const numericPart = lastNumber.substring(4); // Remove "BKYY" prefix
-        
-        // Parse the numeric part to get the sequence number
+        const numericPart = lastBooking.booking_number.substring(4);
         const lastSeq = parseInt(numericPart, 10);
         if (!isNaN(lastSeq)) {
           sequenceNumber = lastSeq + 1;
         }
       }
       
-      // Calculate how many digits we need (minimum 4)
-      const digitsNeeded = Math.max(4, sequenceNumber.toString().length);
+      // Add retry logic to ensure uniqueness
+      let retryCount = 0;
+      const maxRetries = 10;
+      let bookingNumber = null;
       
-      // Format sequence number with leading zeros based on current digits
-      const seqStr = sequenceNumber.toString().padStart(digitsNeeded, '0');
+      while (retryCount < maxRetries) {
+        const digitsNeeded = Math.max(4, sequenceNumber.toString().length);
+        const seqStr = sequenceNumber.toString().padStart(digitsNeeded, '0');
+        const candidateNumber = `${yearPrefix}${seqStr}`;
+        
+        // Check if this number already exists (including soft-deleted)
+        const existingBooking = await Booking.findOne({
+          where: { booking_number: candidateNumber },
+          paranoid: false, // Include soft-deleted records
+          transaction: transaction
+        });
+        
+        if (!existingBooking) {
+          bookingNumber = candidateNumber;
+          break;
+        }
+        
+        // If exists, increment sequence number and try again
+        sequenceNumber++;
+        retryCount++;
+      }
       
-      const bookingNumber = `${yearPrefix}${seqStr}`;
+      if (!bookingNumber) {
+        throw new Error('Unable to generate unique booking number after multiple attempts');
+      }
       
       return bookingNumber;
     }

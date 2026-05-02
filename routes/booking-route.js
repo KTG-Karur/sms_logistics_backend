@@ -716,18 +716,25 @@ async function getAllCustomersPaymentSummary(req, res) {
       status, // 'all', 'paid', 'pending', 'partial'
       sortBy = 'customer_name',
       sortOrder = 'ASC',
-      page = 1,
-      limit = 20
+      page,
+      limit
     } = req.query;
     
     const filters = {
       search,
       status,
       sortBy,
-      sortOrder,
-      page: parseInt(page),
-      limit: parseInt(limit)
+      sortOrder
     };
+    
+    // Only add page and limit to filters if they are provided in the query
+    if (page !== undefined && page !== null && page !== '') {
+      filters.page = parseInt(page);
+    }
+    
+    if (limit !== undefined && limit !== null && limit !== '') {
+      filters.limit = parseInt(limit);
+    }
     
     responseEntries.data = await bookingServices.getAllCustomersPaymentSummary(filters);
     

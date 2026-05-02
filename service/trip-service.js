@@ -12,7 +12,10 @@ const {
   Vehicle,
   Employee,
   OfficeCenter,
-  Customer,PackageType,PackageLoadman,
+  Customer,
+  Location,
+  PackageType,
+  Payment,
   sequelize 
 } = require("../models");
 const { v4: uuidv4 } = require('uuid');
@@ -113,7 +116,7 @@ async function getTrips(query, needIsActive = true) {
         {
           model: Vehicle,
           as: 'vehicle',
-          attributes: ['vehicle_id', 'vehicle_number_plate']
+          attributes: ['vehicle_id', 'vehicle_number_plate', 'vehicle_type_id']
         },
         {
           model: Employee,
@@ -133,15 +136,214 @@ async function getTrips(query, needIsActive = true) {
             attributes: ['delivery_status']
           },
           attributes: [
-            'booking_id', 'booking_number', 'from_center_id', 'to_center_id',
-            'total_amount', 'paid_amount', 'due_amount', 'delivery_status'
+            'booking_id',
+            'booking_number',
+            'llr_number',
+            'booking_date',
+            'from_center_id',
+            'to_center_id',
+            'from_location_id',
+            'to_location_id',
+            'from_customer_id',
+            'to_customer_id',
+            'total_amount',
+            'paid_amount',
+            'due_amount',
+            'payment_by',
+            'payment_status',
+            'delivery_status',
+            'actual_delivery_date',
+            'special_instructions',
+            'reference_number'
+          ],
+          include: [
+            // Booking Packages with Package Type
+            {
+              model: BookingPackage,
+              as: 'packages',
+              attributes: [
+                'booking_package_id',
+                'package_type_id',
+                'quantity',
+                'pickup_charge',
+                'drop_charge',
+                'handling_charge',
+                'total_package_charge'
+              ],
+              where: { is_active: 1 },
+              required: false,
+              include: [
+                {
+                  model: PackageType,
+                  as: 'packageType',
+                  attributes: ['package_type_id', 'package_type_name']
+                }
+              ]
+            },
+            // Payments
+            {
+              model: Payment,
+              as: 'payments',
+              attributes: [
+                'payment_id',
+                'payment_number',
+                'amount',
+                'payment_date',
+                'payment_mode',
+                'payment_type',
+                'status'
+              ],
+              where: { is_active: 1, status: 'completed' },
+              required: false,
+              limit: 5,
+              order: [['payment_date', 'DESC']]
+            },
+            // From Center
+            {
+              model: OfficeCenter,
+              as: 'fromCenter',
+              attributes: ['office_center_id', 'office_center_name']
+            },
+            // To Center
+            {
+              model: OfficeCenter,
+              as: 'toCenter',
+              attributes: ['office_center_id', 'office_center_name']
+            },
+            // From Location
+            {
+              model: Location,
+              as: 'fromLocation',
+              attributes: ['location_id', 'location_name']
+            },
+            // To Location
+            {
+              model: Location,
+              as: 'toLocation',
+              attributes: ['location_id', 'location_name']
+            },
+            // From Customer (Sender)
+            {
+              model: Customer,
+              as: 'fromCustomer',
+              attributes: ['customer_id', 'customer_name', 'customer_number']
+            },
+            // To Customer (Receiver)
+            {
+              model: Customer,
+              as: 'toCustomer',
+              attributes: ['customer_id', 'customer_name', 'customer_number']
+            }
           ]
         }
       ],
       order: [['trip_date', 'DESC'], ['created_at', 'DESC']]
     });
     
-    return trips;
+    // Format the response to include additional computed fields
+    const formattedTrips = trips.map(trip => {
+      const tripData = trip.toJSON();
+      
+      // Calculate total paid amount and enhance each booking
+      if (tripData.bookings && tripData.bookings.length > 0) {
+        let tripTotalPaid = 0;
+        let tripTotalDue = 0;
+        
+        tripData.bookings = tripData.bookings.map(booking => {
+          // Calculate total paid from payments
+          const totalPaidFromPayments = booking.payments?.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0) || 0;
+          
+          // Use paid_amount from booking or calculate from payments
+          const paidAmount = parseFloat(booking.paid_amount || 0) > 0 
+            ? parseFloat(booking.paid_amount) 
+            : totalPaidFromPayments;
+          
+          const totalAmount = parseFloat(booking.total_amount || 0);
+          const dueAmount = parseFloat(booking.due_amount || 0) > 0 
+            ? parseFloat(booking.due_amount) 
+            : totalAmount - paidAmount;
+          
+          // Calculate payment percentage
+          const paymentPercentage = totalAmount > 0 ? (paidAmount / totalAmount) * 100 : 0;
+          
+          // Determine payment status display
+          let paymentStatusDisplay = 'Pending';
+          if (booking.payment_status === 'completed' || dueAmount <= 0) {
+            paymentStatusDisplay = 'Paid';
+          } else if (booking.payment_status === 'partial' || (paidAmount > 0 && dueAmount > 0)) {
+            paymentStatusDisplay = 'Partial Payment';
+          } else {
+            paymentStatusDisplay = 'Pending';
+          }
+          
+          // Calculate total packages count
+          const totalPackagesCount = booking.packages?.reduce((sum, pkg) => sum + (pkg.quantity || 1), 0) || 0;
+          
+          // Calculate total package charges
+          const totalPackageCharges = booking.packages?.reduce((sum, pkg) => sum + parseFloat(pkg.total_package_charge || 0), 0) || 0;
+          
+          // Get package summary
+          const packageSummary = booking.packages?.map(pkg => ({
+            type: pkg.packageType?.package_type_name || 'Standard',
+            quantity: pkg.quantity || 1,
+            pickup_charge: parseFloat(pkg.pickup_charge || 0),
+            drop_charge: parseFloat(pkg.drop_charge || 0),
+            handling_charge: parseFloat(pkg.handling_charge || 0),
+            total_charge: parseFloat(pkg.total_package_charge || 0)
+          })) || [];
+          
+          // Get delivery status from TripBooking if available
+          const tripBookingDeliveryStatus = booking.TripBooking?.delivery_status || booking.delivery_status;
+          
+          // Add to trip totals
+          tripTotalPaid += paidAmount;
+          tripTotalDue += dueAmount;
+          
+          return {
+            ...booking,
+            // Customer details (already included via associations)
+            fromCustomer: booking.fromCustomer || null,
+            toCustomer: booking.toCustomer || null,
+            fromCenter: booking.fromCenter || null,
+            toCenter: booking.toCenter || null,
+            fromLocation: booking.fromLocation || null,
+            toLocation: booking.toLocation || null,
+            packages: booking.packages || [],
+            payments: booking.payments || [],
+            // Computed fields
+            total_paid: paidAmount.toFixed(2),
+            total_due: dueAmount.toFixed(2),
+            payment_percentage: paymentPercentage.toFixed(2),
+            payment_status_display: paymentStatusDisplay,
+            total_packages_count: totalPackagesCount,
+            total_package_charges: totalPackageCharges.toFixed(2),
+            package_summary: packageSummary,
+            trip_delivery_status: tripBookingDeliveryStatus,
+            payment_details: {
+              total_amount: totalAmount.toFixed(2),
+              paid_amount: paidAmount.toFixed(2),
+              due_amount: dueAmount.toFixed(2),
+              payment_status: booking.payment_status,
+              payment_status_display: paymentStatusDisplay,
+              payment_by: booking.payment_by || 'sender',
+              payment_percentage: paymentPercentage.toFixed(2),
+              recent_payments: booking.payments?.slice(0, 3) || []
+            }
+          };
+        });
+        
+        // Add trip total paid and due to trip data
+        tripData.trip_total_paid = tripTotalPaid.toFixed(2);
+        tripData.trip_total_due = tripTotalDue.toFixed(2);
+        tripData.trip_payment_percentage = tripData.total_amount > 0 
+          ? ((tripTotalPaid / parseFloat(tripData.total_amount)) * 100).toFixed(2) 
+          : '0.00';
+      }
+      
+      return tripData;
+    });
+    
+    return formattedTrips;
   } catch (error) {
     throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
   }
@@ -188,7 +390,7 @@ async function getTripById(tripId) {
         {
           model: Vehicle,
           as: 'vehicle',
-          attributes: ['vehicle_id', 'vehicle_number_plate']
+          attributes: ['vehicle_id', 'vehicle_number_plate', 'vehicle_type_id']
         },
         {
           model: Employee,
@@ -210,14 +412,17 @@ async function getTripById(tripId) {
           as: 'bookings',
           through: { 
             model: TripBooking, 
-            attributes: ['trip_booking_id', 'delivery_status'] // Include trip_booking_id for reference
+            attributes: ['trip_booking_id', 'delivery_status']
           },
           attributes: [
             'booking_id',
             'booking_number',
             'llr_number',
+            'booking_date',
             'from_center_id',
             'to_center_id',
+            'from_location_id',
+            'to_location_id',
             'from_customer_id',
             'to_customer_id',
             'total_amount',
@@ -225,7 +430,10 @@ async function getTripById(tripId) {
             'due_amount',
             'payment_by',
             'payment_status',
-            'delivery_status'
+            'delivery_status',
+            'actual_delivery_date',
+            'special_instructions',
+            'reference_number'
           ],
           required: false,
           include: [
@@ -248,24 +456,6 @@ async function getTripById(tripId) {
                   model: PackageType,
                   as: 'packageType',
                   attributes: ['package_type_id', 'package_type_name']
-                },
-                {
-                  model: PackageLoadman,
-                  as: 'packageLoadmen',
-                  where: { is_active: 1 },
-                  required: false,
-                  attributes: [
-                    'package_loadman_id',
-                    'loadman_type',
-                    'amount_earned'
-                  ],
-                  include: [
-                    {
-                      model: Employee,
-                      as: 'loadman',
-                      attributes: ['employee_id', 'employee_name', 'mobile_no']
-                    }
-                  ]
                 }
               ]
             },
@@ -288,6 +478,33 @@ async function getTripById(tripId) {
               model: OfficeCenter,
               as: 'toCenter',
               attributes: ['office_center_id', 'office_center_name']
+            },
+            {
+              model: Location,
+              as: 'fromLocation',
+              attributes: ['location_id', 'location_name']
+            },
+            {
+              model: Location,
+              as: 'toLocation',
+              attributes: ['location_id', 'location_name']
+            },
+            {
+              model: Payment,
+              as: 'payments',
+              attributes: [
+                'payment_id',
+                'payment_number',
+                'amount',
+                'payment_date',
+                'payment_mode',
+                'payment_type',
+                'status'
+              ],
+              where: { is_active: 1, status: 'completed' },
+              required: false,
+              limit: 5,
+              order: [['payment_date', 'DESC']]
             }
           ]
         }
@@ -296,15 +513,6 @@ async function getTripById(tripId) {
 
     if (!trip) {
       throw new Error(messages.DATA_NOT_FOUND);
-    }
-
-    // Log to verify data is coming through
-    console.log("Loadmen count:", trip.loadmen?.length || 0);
-    console.log("Bookings count:", trip.bookings?.length || 0);
-    
-    // Log packages for first booking if exists
-    if (trip.bookings && trip.bookings.length > 0) {
-      console.log("First booking packages:", trip.bookings[0].packages?.length || 0);
     }
 
     return trip;
@@ -1125,14 +1333,14 @@ async function updateTripBookings(tripId, updateData) {
       where: { 
         trip_id: tripId, 
         is_active: 1,
-        // status: 'scheduled' // Only allow updates to scheduled trips
+        status: 'scheduled' // Only allow updates to scheduled trips
       },
       include: [
         {
           model: Booking,
           as: 'bookings',
           through: { attributes: ['trip_booking_id'] },
-          attributes: ['booking_id', 'booking_number']
+          attributes: ['booking_id', 'booking_number', 'total_amount', 'delivery_status']
         }
       ],
       transaction
@@ -1149,11 +1357,13 @@ async function updateTripBookings(tripId, updateData) {
     const addedBookings = [];
     const removedBookings = [];
     const errors = [];
+    let hasSuccessfulChanges = false;
     
     // ===== REMOVE BOOKINGS =====
     if (removeBookingIds.length > 0) {
       // Verify that the bookings to remove are actually part of this trip
       const existingBookingIds = existingTrip.bookings.map(b => b.booking_id);
+      const existingBookingsMap = new Map(existingTrip.bookings.map(b => [b.booking_id, b]));
       
       const validRemoveIds = removeBookingIds.filter(id => existingBookingIds.includes(id));
       const invalidRemoveIds = removeBookingIds.filter(id => !existingBookingIds.includes(id));
@@ -1162,25 +1372,77 @@ async function updateTripBookings(tripId, updateData) {
         errors.push(`Bookings not found in this trip: ${invalidRemoveIds.join(', ')}`);
       }
       
-      if (validRemoveIds.length > 0) {
-        // Delete the trip bookings
-        const deleteCount = await TripBooking.destroy({
-          where: {
-            trip_id: tripId,
-            booking_id: { [Op.in]: validRemoveIds }
-          },
-          transaction
-        });
+      // Check for delivered bookings that cannot be removed
+      const deliveredRemoveIds = [];
+      const availableRemoveIds = [];
+      
+      for (const id of validRemoveIds) {
+        const booking = existingBookingsMap.get(id);
+        if (booking && booking.delivery_status === 'delivered') {
+          deliveredRemoveIds.push(id);
+          errors.push(`Booking #${booking.booking_number} cannot be removed because it is already delivered`);
+        } else {
+          availableRemoveIds.push(id);
+        }
+      }
+      
+      if (availableRemoveIds.length > 0) {
+        hasSuccessfulChanges = true;
         
-        // Get booking details for response
+        // Get booking details before deletion
         const removedBookingsData = existingTrip.bookings.filter(b => 
-          validRemoveIds.includes(b.booking_id)
+          availableRemoveIds.includes(b.booking_id)
         );
         
         removedBookings.push(...removedBookingsData.map(b => ({
           booking_id: b.booking_id,
-          booking_number: b.booking_number
+          booking_number: b.booking_number,
+          amount: b.total_amount,
+          delivery_status: b.delivery_status
         })));
+        
+        // Calculate amount to subtract from trip totals
+        let amountToSubtract = 0;
+        let packagesToSubtract = 0;
+        
+        for (const booking of removedBookingsData) {
+          amountToSubtract += parseFloat(booking.total_amount || 0);
+          
+          // Get package count for this booking
+          const packageCount = await BookingPackage.count({
+            where: { booking_id: booking.booking_id, is_active: 1 },
+            transaction
+          });
+          packagesToSubtract += packageCount || 1;
+        }
+        
+        // Delete the trip bookings
+        await TripBooking.destroy({
+          where: {
+            trip_id: tripId,
+            booking_id: { [Op.in]: availableRemoveIds }
+          },
+          transaction
+        });
+        
+        // Update trip totals
+        const newTotalPackages = Math.max(0, (existingTrip.total_packages || 0) - packagesToSubtract);
+        const newTotalAmount = Math.max(0, (parseFloat(existingTrip.total_amount || 0) - amountToSubtract)).toFixed(2);
+        
+        await Trip.update(
+          {
+            total_packages: newTotalPackages,
+            total_amount: newTotalAmount
+          },
+          {
+            where: { trip_id: tripId },
+            transaction
+          }
+        );
+      }
+      
+      if (deliveredRemoveIds.length > 0) {
+        errors.push(`Cannot remove ${deliveredRemoveIds.length} booking(s) because they are already delivered. Only undelivered bookings can be removed.`);
       }
     }
     
@@ -1199,123 +1461,181 @@ async function updateTripBookings(tripId, updateData) {
       const newBookingIds = addBookingIds.filter(id => !existingBookingIds.includes(id));
       
       if (newBookingIds.length > 0) {
-        // Check if these bookings are available (not delivered and not in other scheduled trips)
-        const bookingsInOtherTrips = await TripBooking.findAll({
+        // First, check if any of these bookings are already delivered
+        const deliveredBookings = await Booking.findAll({
           where: {
             booking_id: { [Op.in]: newBookingIds },
+            delivery_status: 'delivered',
             is_active: 1
           },
-          include: [
-            {
-              model: Trip,
-              as: 'trip',
-              where: {
-                status: { [Op.in]: ['scheduled', 'in_progress'] },
-                is_active: 1,
-                trip_id: { [Op.ne]: tripId } // Not this trip
-              },
-              attributes: ['trip_id', 'trip_number']
-            }
-          ],
+          attributes: ['booking_id', 'booking_number'],
           transaction
         });
         
-        if (bookingsInOtherTrips.length > 0) {
-          const conflictBookings = bookingsInOtherTrips.map(tb => ({
-            booking_id: tb.booking_id,
-            trip_id: tb.trip?.trip_id,
-            trip_number: tb.trip?.trip_number
-          }));
-          errors.push(`Some bookings are already assigned to other trips: ${JSON.stringify(conflictBookings)}`);
+        if (deliveredBookings.length > 0) {
+          const deliveredIds = deliveredBookings.map(b => b.booking_id);
+          const deliveredNumbers = deliveredBookings.map(b => b.booking_number);
+          errors.push(`Cannot add bookings that are already delivered: ${deliveredNumbers.join(', ')}`);
+          
+          // Remove delivered bookings from the list
+          const remainingIds = newBookingIds.filter(id => !deliveredIds.includes(id));
+          newBookingIds.length = 0;
+          newBookingIds.push(...remainingIds);
+        }
+        
+        // Check if remaining bookings are available (not in other scheduled trips)
+        if (newBookingIds.length > 0) {
+          const bookingsInOtherTrips = await TripBooking.findAll({
+            where: {
+              booking_id: { [Op.in]: newBookingIds },
+              is_active: 1
+            },
+            include: [
+              {
+                model: Trip,
+                as: 'trip',
+                where: {
+                  status: { [Op.in]: ['scheduled', 'in_progress'] },
+                  is_active: 1,
+                  trip_id: { [Op.ne]: tripId } // Not this trip
+                },
+                attributes: ['trip_id', 'trip_number']
+              }
+            ],
+            transaction
+          });
+          
+          if (bookingsInOtherTrips.length > 0) {
+            const conflictBookings = bookingsInOtherTrips.map(tb => ({
+              booking_id: tb.booking_id,
+              trip_id: tb.trip?.trip_id,
+              trip_number: tb.trip?.trip_number
+            }));
+            errors.push(`Some bookings are already assigned to other trips: ${JSON.stringify(conflictBookings)}`);
+            // Remove conflicting bookings from the list
+            const conflictIds = bookingsInOtherTrips.map(tb => tb.booking_id);
+            const remainingIds = newBookingIds.filter(id => !conflictIds.includes(id));
+            newBookingIds.length = 0;
+            newBookingIds.push(...remainingIds);
+          }
         }
         
         // Check if bookings are in 'not_delivered' status
-        const bookingsToAdd = await Booking.findAll({
-          where: {
-            booking_id: { [Op.in]: newBookingIds },
-            delivery_status: 'not_delivered',
-            is_active: 1
-          },
-          attributes: ['booking_id', 'booking_number', 'total_amount'],
-          transaction
-        });
-        
-        if (bookingsToAdd.length !== newBookingIds.length) {
-          const foundIds = bookingsToAdd.map(b => b.booking_id);
-          const notFoundIds = newBookingIds.filter(id => !foundIds.includes(id));
-          errors.push(`Bookings not found or not available (status not 'not_delivered'): ${notFoundIds.join(', ')}`);
-        }
-        
-        // Add valid bookings to trip
-        if (bookingsToAdd.length > 0) {
-          // Calculate new totals
-          let additionalPackages = 0;
-          let additionalAmount = 0;
+        if (newBookingIds.length > 0) {
+          const bookingsToAdd = await Booking.findAll({
+            where: {
+              booking_id: { [Op.in]: newBookingIds },
+              delivery_status: 'not_delivered',
+              is_active: 1
+            },
+            attributes: ['booking_id', 'booking_number', 'total_amount'],
+            transaction
+          });
           
-          for (const booking of bookingsToAdd) {
-            // Get package count for this booking
-            const packageCount = await BookingPackage.count({
-              where: { booking_id: booking.booking_id, is_active: 1 },
-              transaction
-            });
-            
-            additionalPackages += packageCount || 1; // At least 1 package per booking
-            additionalAmount += parseFloat(booking.total_amount || 0);
-            
-            // Create trip booking record
-            await TripBooking.create({
-              trip_booking_id: uuidv4(),
-              trip_id: tripId,
-              booking_id: booking.booking_id,
-              delivery_status: 'pending',
-              created_at: new Date(),
-              updated_at: new Date()
-            }, { transaction });
-            
-            addedBookings.push({
-              booking_id: booking.booking_id,
-              booking_number: booking.booking_number,
-              amount: booking.total_amount
-            });
+          if (bookingsToAdd.length !== newBookingIds.length) {
+            const foundIds = bookingsToAdd.map(b => b.booking_id);
+            const notFoundIds = newBookingIds.filter(id => !foundIds.includes(id));
+            errors.push(`Bookings not found or not available (status not 'not_delivered'): ${notFoundIds.join(', ')}`);
           }
           
-          // Update trip totals
-          const newTotalPackages = (existingTrip.total_packages || 0) + additionalPackages;
-          const newTotalAmount = (parseFloat(existingTrip.total_amount || 0) + additionalAmount).toFixed(2);
-          
-          await Trip.update(
-            {
-              total_packages: newTotalPackages,
-              total_amount: newTotalAmount
-            },
-            {
-              where: { trip_id: tripId },
-              transaction
+          // Add valid bookings to trip
+          if (bookingsToAdd.length > 0) {
+            hasSuccessfulChanges = true;
+            
+            // Calculate new totals
+            let additionalPackages = 0;
+            let additionalAmount = 0;
+            
+            for (const booking of bookingsToAdd) {
+              // Get package count for this booking
+              const packageCount = await BookingPackage.count({
+                where: { booking_id: booking.booking_id, is_active: 1 },
+                transaction
+              });
+              
+              additionalPackages += packageCount || 1; // At least 1 package per booking
+              additionalAmount += parseFloat(booking.total_amount || 0);
+              
+              // Create trip booking record
+              await TripBooking.create({
+                trip_booking_id: uuidv4(),
+                trip_id: tripId,
+                booking_id: booking.booking_id,
+                delivery_status: 'pending',
+                created_at: new Date(),
+                updated_at: new Date()
+              }, { transaction });
+              
+              addedBookings.push({
+                booking_id: booking.booking_id,
+                booking_number: booking.booking_number,
+                amount: booking.total_amount
+              });
             }
-          );
+            
+            // Update trip totals
+            const newTotalPackages = (existingTrip.total_packages || 0) + additionalPackages;
+            const newTotalAmount = (parseFloat(existingTrip.total_amount || 0) + additionalAmount).toFixed(2);
+            
+            await Trip.update(
+              {
+                total_packages: newTotalPackages,
+                total_amount: newTotalAmount
+              },
+              {
+                where: { trip_id: tripId },
+                transaction
+              }
+            );
+          }
         }
       }
     }
     
-    // If there are errors but we still made some changes, we'll still commit but include errors in response
+    // Commit the transaction
     await transaction.commit();
     
     // Get updated trip details
     const updatedTrip = await getTripById(tripId);
     
-    return {
-      success: true,
-      message: `Trip bookings updated: ${addedBookings.length} added, ${removedBookings.length} removed`,
-      changes: {
-        added: addedBookings,
-        removed: removedBookings
-      },
-      errors: errors.length > 0 ? errors : undefined,
-      trip: updatedTrip
-    };
+    // Determine if the operation was fully successful, partially successful, or failed
+    const hasErrors = errors.length > 0;
+    const hasChanges = hasSuccessfulChanges;
+    
+    if (!hasChanges && hasErrors) {
+      // No changes made, only errors -> Throw error
+      throw new Error(errors.join('; '));
+    } else if (hasChanges && hasErrors) {
+      // Partial success - return success false with error details
+      return {
+        success: false,
+        message: `Partial success: ${addedBookings.length} added, ${removedBookings.length} removed. Errors: ${errors.join('; ')}`,
+        changes: {
+          added: addedBookings,
+          removed: removedBookings,
+          partialSuccess: true
+        },
+        errors: errors,
+        trip: updatedTrip
+      };
+    } else {
+      // Full success
+      return {
+        success: true,
+        message: `Trip bookings updated successfully: ${addedBookings.length} added, ${removedBookings.length} removed`,
+        changes: {
+          added: addedBookings,
+          removed: removedBookings
+        },
+        trip: updatedTrip
+      };
+    }
     
   } catch (error) {
-    await transaction.rollback();
+    // Only rollback if transaction is not already finished
+    if (transaction && transaction.finished !== 'commit' && transaction.finished !== 'rollback') {
+      await transaction.rollback();
+    }
     throw new Error(error.message ? error.message : messages.OPERATION_ERROR);
   }
 }
